@@ -27,6 +27,8 @@
 #   executables.<name>
 #                     each executable those gemspecs declare, as
 #                     `bin/<name>` running it with the app's bundle
+#   devShell          a shell with the Ruby and libraries of the `app`
+#                     build, for `bundler-purifier install`
 #
 # The lock names every one of these outputs, so Nix knows them when it
 # evaluates, without building anything.
@@ -59,9 +61,14 @@
   # that needs credentials. It is called with the arguments of fetchgit.
   fetchgit ? null,
   # Build tools and libraries for gems with native extensions, which
-  # compile in the `app` build: pkg-config and libpq for pg, for example.
+  # compile in the `app` build, beyond the ones nixpkgs names for them
+  # (`useGemConfig`).
   nativeBuildInputs ? [ ],
   buildInputs ? [ ],
+  # Adds the build inputs that nixpkgs' gem configuration
+  # (pkgs.defaultGemConfig) names for each locked gem, such as libyaml for
+  # psych, so that common native extensions compile without arguments.
+  useGemConfig ? true,
   # Bundler groups that `app` leaves out, as `bundle config set without`.
   without ? [ ],
   # Runs `checkCommand` in the `app` build after the install.
@@ -267,6 +274,43 @@ let
     git add -A
   '';
 
+  # The build inputs that nixpkgs' gem configuration names for the locked
+  # gems. A gem file is named <name>-<version>[-<platform>].gem. An entry
+  # that fails to evaluate for a gem adds nothing.
+  gemConfigInputs = lib.concatMap (
+    download:
+    let
+      parts = builtins.match "(.+)-([0-9][^-]*)(-.+)?\\.gem" (baseNameOf download.path);
+      gemName = builtins.elemAt parts 0;
+      config = pkgs.defaultGemConfig.${gemName} or null;
+      evaluated = builtins.tryEval (
+        let
+          attrs = config {
+            inherit gemName;
+            version = builtins.elemAt parts 1;
+          };
+          inputs = (attrs.buildInputs or [ ]) ++ (attrs.nativeBuildInputs or [ ]);
+        in
+        # Each input is forced to its outer value, so that an entry that
+        # fails to evaluate fails here, inside tryEval.
+        builtins.foldl' (forced: input: builtins.seq input forced) inputs inputs
+      );
+    in
+    if parts == null || config == null || !evaluated.success then
+      [ ]
+    # The configuration supplies system libraries and tools. Its nixpkgs
+    # gems and Rubies stay out: Bundler supplies the gems, and their setup
+    # hooks would put other gem versions on RUBYLIB.
+    else
+      lib.filter (input: !(lib.isAttrs input && (input ? gemName || input ? rubyEngine))) evaluated.value
+  ) lock.files;
+
+  # The libraries the gems may load at run time: gems such as ruby-vips
+  # open a library through FFI by its name, so the shell and the `bundle`
+  # wrapper put these on LD_LIBRARY_PATH.
+  runtimeInputs = buildInputs ++ lib.optionals useGemConfig (lib.unique gemConfigInputs);
+  runtimeLibraryPath = lib.makeLibraryPath runtimeInputs;
+
   # The project and its external path sources need a repository for their
   # gemspecs; git sources get one in setupBundler.
   usesGemspecs = lock.gems != [ ] || hasExternal;
@@ -284,7 +328,8 @@ let
         gitMinimal
       ]
       ++ nativeBuildInputs;
-      inherit buildInputs doCheck;
+      buildInputs = buildInputs ++ lib.optionals useGemConfig (lib.unique gemConfigInputs);
+      inherit doCheck;
       dontConfigure = true;
       buildPhase = ''
         runHook preBuild
@@ -352,6 +397,7 @@ let
     # Bundler evaluates the gemspecs of path sources on every run, and many
     # of them call `git ls-files`.
     export PATH=${ruby'}/bin:"$PATH":${gitMinimal}/bin
+    export LD_LIBRARY_PATH=${runtimeLibraryPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
     exec ruby "$GEM_HOME/bin/bundle" "$@"
   '';
 
@@ -395,6 +441,18 @@ let
 in
 {
   inherit gemCache app bundle;
+  # A shell with the Ruby, git, build tools and libraries of the `app`
+  # build, for `bundler-purifier install` and day-to-day work: native
+  # extensions compile in it as they do in the sandbox.
+  devShell = pkgs.mkShell {
+    packages = [
+      ruby'
+      gitMinimal
+    ]
+    ++ nativeBuildInputs
+    ++ runtimeInputs;
+    LD_LIBRARY_PATH = runtimeLibraryPath;
+  };
   packages = lib.mapAttrs (_: mkPackage) lock.gemsByName;
   # Each executable that a gemspec of the project declares, run with the
   # app's bundle: `bin/<name>`.

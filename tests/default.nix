@@ -9,6 +9,8 @@
   pkgs,
   overlay,
   cli,
+  # The source of Lobsters at its pinned commit (tests/dependencies).
+  lobsters,
 }:
 let
   purified = pkgs.extend overlay;
@@ -51,6 +53,17 @@ let
     src = ./fixtures/submodules;
     name = "fixture-submodules";
   };
+
+  # A real-world project: Lobsters, built from its own Gemfile.lock and the
+  # lockfile that `bundler-purifier lock` wrote for it, which lives here
+  # rather than in the Lobsters tree.
+  lobstersBuild = purified.buildBundlerProject {
+    src = lobsters;
+    lockFile = ./real/lobsters/bundler-purifier.lock.json;
+    name = "lobsters";
+    # ruby-vips opens libvips through FFI when the app loads.
+    buildInputs = [ pkgs.vips ];
+  };
 in
 {
   inherit cli;
@@ -88,6 +101,26 @@ in
   # sassc comes from a git source whose libsass is a submodule; its native
   # extension compiles libsass from the submodule's checkout.
   fixture-submodules = runsMain "fixture-submodules-runs" submodules ".purified{width:3px}";
+
+  # The shell for working on Lobsters, which tests/interactive.sh uses.
+  real-lobsters-shell = lobstersBuild.devShell;
+
+  # Lobsters installs its bundle of 180 gems offline in the sandbox, with
+  # Ruby 4.0 and Bundler 4.0, and Rails loads with it.
+  real-lobsters =
+    purified.runCommand "real-lobsters"
+      {
+        nativeBuildInputs = [ lobstersBuild.bundle ];
+      }
+      ''
+        export HOME="$TMPDIR"
+        cd ${lobstersBuild.app}
+        bundle exec rails --version | tee "$out"
+        grep -q '^Rails ' "$out"
+        # A gem that opens its library at run time finds it.
+        bundle exec ruby -e 'require "vips"; puts "libvips #{Vips.version_string}"' | tee -a "$out"
+        grep -q '^libvips ' "$out"
+      '';
 
   # The executable that the library's gemspec declares, which the lock
   # names, runs with the library's bundle.

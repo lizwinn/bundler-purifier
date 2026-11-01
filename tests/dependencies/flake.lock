@@ -76,6 +76,23 @@
         "type": "github"
       }
     },
+    "lobsters": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1793421271,
+        "narHash": "sha256-MidCtPYmp91ADKj1GK0aH+XcYJUToADOY0RydBITQ+0=",
+        "owner": "lobsters",
+        "repo": "lobsters",
+        "rev": "cb2b28371dbf5549b6fad293a6c2dfc8ec7a0320",
+        "type": "github"
+      },
+      "original": {
+        "owner": "lobsters",
+        "repo": "lobsters",
+        "rev": "cb2b28371dbf5549b6fad293a6c2dfc8ec7a0320",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1793341285,
@@ -111,6 +128,7 @@
       "inputs": {
         "caisson": "caisson",
         "flake-parts": "flake-parts_2",
+        "lobsters": "lobsters",
         "nixpkgs": "nixpkgs",
         "treefmt-nix": "treefmt-nix"
       }
