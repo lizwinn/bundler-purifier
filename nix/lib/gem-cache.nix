@@ -1,20 +1,35 @@
 # SPDX-License-Identifier: MIT
 #
 # The gem cache of a lockfile: the directory Bundler reads with
-# `bundle install --local` (its `vendor/cache`). Each locked gem file is a
-# link into the store. Each git source is a copy of its checkout with the
-# `.bundlecache` marker that Bundler leaves in a cached git source. It is a
-# package for callPackage, with the lockfile among its arguments.
+# `bundle install --local` (its `vendor/cache`). It is a package for
+# callPackage, with the lockfile among its arguments.
+#
+# The shared nix-purifiers library (`purifier`, its `lib.purifier`)
+# fetches each download: a gem file is a file entry, and a git source is a
+# git entry. Each gem file is a link into the store. Each git checkout is a
+# copy with the `.bundlecache` marker that Bundler leaves in a cached git
+# source, which the library's `tree` does not write.
 {
   lib,
+  pkgs,
   runCommand,
-  fetchurl,
-  fetchgit,
+  purifier,
   lockFile,
+  # Replace nixpkgs' fetchers, as for a gem server or a git repository that
+  # needs credentials; each takes the arguments of nixpkgs' fetcher of the
+  # same name.
+  fetchurl ? null,
+  fetchgit ? null,
 }:
 let
   lock = import ./lock.nix { inherit lockFile; };
-  fetch = import ./fetch.nix { inherit lock fetchurl fetchgit; };
+  fetch = purifier.fetchEntry (
+    {
+      inherit pkgs;
+    }
+    // lib.optionalAttrs (fetchurl != null) { inherit fetchurl; }
+    // lib.optionalAttrs (fetchgit != null) { inherit fetchgit; }
+  );
 in
 # The manifests go to the builder as files, since a large bundle locks
 # hundreds of gems and the list would not fit in an environment variable.

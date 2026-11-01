@@ -22,6 +22,7 @@ cli="$(nix build --no-link --print-out-paths '.#cli')/bin/bundler-purifier"
 # it rather than a Ruby the machine has.
 ruby=$(grep -o '/nix/store/[^"]*-ruby-[^/"]*/bin' "$cli" | head -n 1)
 nixpkgs=$(grep -o "BUNDLER_PURIFIER_NIXPKGS='[^']*'" "$cli" | cut -d"'" -f2)
+purifier_flake=$(grep -o "BUNDLER_PURIFIER_SHARED_FLAKE='[^']*'" "$cli" | cut -d"'" -f2)
 # Native extensions compile against that Ruby, which only nixpkgs' C
 # toolchain links with; a machine's own compiler does not.
 toolchain=$(nix-build "$nixpkgs" -A stdenv.cc -A gnumake --no-out-link | sed 's|$|/bin|' | paste -sd:)
@@ -59,7 +60,7 @@ for _ in $(seq 50); do [[ -s "$work/port" ]] && break; sleep 0.1; done
   GEM_HOST_API_KEY=fake-key "$cli" push greeting --host "http://127.0.0.1:$(cat "$work/port")")
 built=$(nix-build --no-out-link --expr "
   let pkgs = import $nixpkgs { };
-  in ((pkgs.callPackage $repo/nix/lib/build-bundler-project.nix { }) {
+  in ((pkgs.callPackage $repo/nix/lib/build-bundler-project.nix { inherit ((builtins.getFlake \"$purifier_flake\").lib) purifier; }) {
     src = $work/fixtures/library;
   }).packages.greeting")
 cmp "$work/upload" "$built/greeting-0.2.0.gem"
@@ -89,7 +90,7 @@ expect_failure() {
 evaluate() {
   nix-instantiate --expr "
     let pkgs = import $nixpkgs { };
-    in ((pkgs.callPackage $repo/nix/lib/build-bundler-project.nix { }) {
+    in ((pkgs.callPackage $repo/nix/lib/build-bundler-project.nix { inherit ((builtins.getFlake \"$purifier_flake\").lib) purifier; }) {
       src = $work/broken;
     }).app"
 }

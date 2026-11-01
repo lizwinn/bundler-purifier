@@ -8,5 +8,13 @@
   lockFile,
   # The nixpkgs the CLI was built with.
   nixpkgs,
+  # The shared nix-purifiers library as a locked flake reference.
+  purifierFlake,
 }:
-(import nixpkgs { }).callPackage ./gem-cache.nix { inherit lockFile; }
+let
+  pkgs = import nixpkgs { };
+in
+pkgs.callPackage ./gem-cache.nix {
+  inherit lockFile;
+  inherit ((builtins.getFlake purifierFlake).lib) purifier;
+}

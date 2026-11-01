@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: MIT
 #
 # The bundler-purifier command: bin/bundler-purifier on nixpkgs' Ruby,
-# with the Nix library it realizes lockfiles with and the nixpkgs that
-# `bundler-purifier push` builds with. The lock run uses this Ruby, so
-# `override { ruby = ruby_3_3; }` locks a project that requires Ruby 3.3.
+# with the Nix library it realizes lockfiles with, the shared nix-purifiers
+# library that library fetches with, and the nixpkgs that `install` and
+# `push` build with. The lock run uses the Ruby the project asks for, and
+# this Ruby when the project asks for none.
 {
   lib,
   stdenvNoCC,
@@ -13,7 +14,13 @@
   nix-prefetch-git,
   path,
   version,
+  # The shared nix-purifiers library as a locked flake reference, which
+  # pkgs/default.nix reads from flake.lock.
+  purifierRef ? null,
 }:
+assert
+  purifierRef != null
+  || throw "bundler-purifier: the CLI needs the shared nix-purifiers library; pass purifierRef, as pkgs/default.nix does.";
 stdenvNoCC.mkDerivation {
   pname = "bundler-purifier";
   inherit version;
@@ -29,6 +36,7 @@ stdenvNoCC.mkDerivation {
     makeWrapper ${ruby}/bin/ruby "$out/bin/bundler-purifier" \
       --add-flags "$out/libexec/bundler-purifier.rb" \
       --set BUNDLER_PURIFIER_LIB ${../../nix/lib} \
+      --set BUNDLER_PURIFIER_SHARED_FLAKE ${lib.escapeShellArg purifierRef} \
       --set BUNDLER_PURIFIER_NIXPKGS ${path} \
       --suffix PATH : ${
         lib.makeBinPath [

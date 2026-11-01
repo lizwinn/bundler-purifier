@@ -37,6 +37,9 @@
   gitMinimal,
   writeShellScriptBin,
   pkgs,
+  # The `purifier` namespace of the shared nix-purifiers library, which
+  # fetches the locked downloads. The bundler-purifier overlay passes it.
+  purifier,
 }:
 {
   # The root of the Bundler project, where Gemfile and Gemfile.lock are.
@@ -213,7 +216,7 @@ let
 
   gemCache = callPackage ./gem-cache.nix (
     {
-      inherit lockFile;
+      inherit lockFile purifier;
     }
     // lib.optionalAttrs (fetchurl != null) { inherit fetchurl; }
     // lib.optionalAttrs (fetchgit != null) { inherit fetchgit; }

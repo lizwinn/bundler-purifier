@@ -30,23 +30,6 @@ let
     toHashFormat = "sri";
   };
 
-  # A store path name from a file name. Store path names allow
-  # [A-Za-z0-9+._?=-], must not start with a dot, and are at most 211
-  # characters; every other character becomes "_".
-  storeName =
-    fileName:
-    let
-      # builtins.split alternates the text between matches with a list per
-      # match.
-      replaced = builtins.concatStringsSep "" (
-        map (part: if builtins.isList part then "_" else part) (
-          builtins.split "[^A-Za-z0-9+._?=-]" fileName
-        )
-      );
-      undotted = builtins.head (builtins.match "\\.*(.*)" replaced);
-      nonEmpty = if undotted == "" then "file" else undotted;
-    in
-    builtins.substring 0 200 nonEmpty;
 in
 assert
   (lock.version or null) == supportedVersion
@@ -58,12 +41,7 @@ assert
   || throw "bundler-purifier: ${name} was changed by hand: its content does not match its contentHash. Run `bundler-purifier relock`.";
 lock
 // {
-  inherit storeName;
-
-  # The fetch name of a download: its file name, made a valid store name.
-  downloadName = download: storeName (baseNameOf download.path);
-
-  # The two kinds of download (see fetch.nix).
+  # The two kinds of download: the shared library's file and git entries.
   files = builtins.filter (d: !(d ? git)) lock.downloads;
   gitCheckouts = builtins.filter (d: d ? git) lock.downloads;
 

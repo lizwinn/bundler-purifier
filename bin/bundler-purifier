@@ -374,6 +374,11 @@ module BundlerPurifier
     ENV["BUNDLER_PURIFIER_LIB"] || fail!("BUNDLER_PURIFIER_LIB is not set; run bundler-purifier through its Nix package")
   end
 
+  # The shared nix-purifiers library as a locked flake reference.
+  def shared_flake
+    ENV["BUNDLER_PURIFIER_SHARED_FLAKE"] || fail!("BUNDLER_PURIFIER_SHARED_FLAKE is not set; run bundler-purifier through its Nix package")
+  end
+
   # Realizes the lock into a writable gem cache under .bundle/purifier.
   # The out-link of the build is the GC root that keeps every locked file
   # alive. Bundler leaves marker files in its cache, so the cache is a
@@ -387,6 +392,7 @@ module BundlerPurifier
       "nix-build", File.join(lib_dir, "realize.nix"),
       "--arg", "lockFile", File.join(root, LOCK_FILE),
       "--arg", "nixpkgs", nixpkgs,
+      "--argstr", "purifierFlake", shared_flake,
       "--out-link", File.join(state, "gem-cache")
     ).strip
 
@@ -429,7 +435,9 @@ module BundlerPurifier
     expr = <<~NIX
       let
         pkgs = import #{nixpkgs} { };
-        build = pkgs.callPackage #{File.join(lib_dir, "build-bundler-project.nix")} { };
+        build = pkgs.callPackage #{File.join(lib_dir, "build-bundler-project.nix")} {
+          inherit ((builtins.getFlake #{JSON.generate(shared_flake)}).lib) purifier;
+        };
       in
       (build { src = #{root}; }).packages.#{JSON.generate(name)}
     NIX

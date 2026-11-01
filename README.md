@@ -7,6 +7,9 @@ resolution. Nix then builds the project from that lockfile. The project
 does not need generated Nix files of its own.
 
 bundler-purifier is part of [nix-purifiers](https://nix-purifiers.github.io).
+Its lockfile lists the downloads as the file and git entries of the
+shared [purifier](https://github.com/nix-purifiers/purifier) library,
+which fetches them.
 
 - **A lockfile.** `bundler-purifier lock` writes `bundler-purifier.lock.json`
   at the project root. It holds every gem file Bundler fetches, for every
