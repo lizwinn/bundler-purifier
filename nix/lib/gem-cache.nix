@@ -13,7 +13,9 @@
   lib,
   pkgs,
   purifier,
-  lock,
+  # The file entries and the git entries to cache.
+  files,
+  gitCheckouts,
   fetchers,
 }:
 let
@@ -23,8 +25,8 @@ in
 # hundreds of gems and the list would not fit in an environment variable.
 pkgs.runCommand "bundler-gem-cache"
   {
-    files = lib.concatMapStrings (d: "${d.path}\t${fetch d}\n") lock.files;
-    gitCheckouts = lib.concatMapStrings (d: "${d.path}\t${fetch d}\n") lock.gitCheckouts;
+    files = lib.concatMapStrings (d: "${d.path}\t${fetch d}\n") files;
+    gitCheckouts = lib.concatMapStrings (d: "${d.path}\t${fetch d}\n") gitCheckouts;
     passAsFile = [
       "files"
       "gitCheckouts"

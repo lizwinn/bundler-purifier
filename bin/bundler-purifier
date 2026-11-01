@@ -5,7 +5,10 @@
 #
 #   bundler-purifier lock [--force]   record what Gemfile.lock cannot, when
 #                                     the Gemfile, Gemfile.lock or a gemspec
-#                                     changed (or always, with --force)
+#                                     changed (or always, with --force);
+#                                     Gemfile.lock keeps its resolution
+#   bundler-purifier update [GEM...]  re-resolve every gem, or the named
+#                                     ones, with bundle update, then lock
 #   bundler-purifier prefetch [ARGS]  realize the locked gems and the dev
 #                                     shell, with GC roots, and install the
 #                                     bundle from them offline
@@ -507,6 +510,18 @@ module BundlerPurifier
     puts "bundler-purifier: prefetched; work offline with `nix develop #{shell}`"
   end
 
+  # Re-resolves Gemfile.lock with Bundler's own `bundle update`, for every
+  # gem or the named ones, in the environment of the lock run, then relocks
+  # the purifier lockfile against the result.
+  def update(gems)
+    Dir.mktmpdir("bundler-purifier-update") do |state|
+      env = lock_env(state)
+      write_lock_run_config(env["BUNDLE_APP_CONFIG"])
+      run!(env, "bundle", "update", *gems, chdir: root)
+    end
+    lock(force: true)
+  end
+
   # Pushes each gem file of the `release` that Nix built with `gem push`.
   def publish(args)
     read_lock!
@@ -520,6 +535,8 @@ module BundlerPurifier
     usage: bundler-purifier [--lockfile PATH] COMMAND
       lock [--force]   record what Gemfile.lock cannot, when the Gemfile,
                        Gemfile.lock or a gemspec changed (or always)
+      update [GEM...]  re-resolve every gem, or the named ones, with
+                       bundle update, then lock
       prefetch [ARGS]  realize the locked gems and the dev shell, and
                        install the bundle offline (ARGS go to bundle install)
       publish [ARGS]   push the gems that Nix built (ARGS go to gem push)
@@ -536,6 +553,7 @@ module BundlerPurifier
     command = argv.shift
     case command
     when "lock" then lock(force: argv.delete("--force") ? true : false)
+    when "update" then update(argv)
     when "prefetch" then prefetch(argv)
     when "publish" then publish(argv)
     else

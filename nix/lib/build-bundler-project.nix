@@ -39,6 +39,8 @@
   lib,
   # The `purifier` namespace of the shared nix-purifiers library.
   purifier,
+  # lib.bundler-purifier.readLock (read-lock.nix).
+  readLock,
 }:
 {
   # The package set the builds use.
@@ -91,16 +93,31 @@ let
   # store first.
   srcFile = rel: if builtins.isPath src then src + "/${rel}" else "${src}/${rel}";
 
-  gemfileLockPath = if gemfileLock != null then gemfileLock else srcFile "Gemfile.lock";
-  lock = import ./lock.nix {
-    inherit lib lockFile;
-    gemfileLockText =
-      if builtins.pathExists gemfileLockPath then
-        builtins.readFile gemfileLockPath
-      else
-        throw "bundler-purifier: the project has no Gemfile.lock; run `bundler-purifier lock` in the project root, or pass `gemfileLock`.";
+  # The lock in memory (read-lock.nix), checked by the shared library:
+  # evaluation fails with its problems, each naming the fix.
+  readResult = readLock {
+    inherit
+      src
+      lockFile
+      gemfileLock
+      externalPaths
+      ;
   };
-  lockName = baseNameOf (toString lockFile);
+  checkedLock = purifier.checkLock readResult;
+  # What the builder reads besides the entries. Its names are known without
+  # the check, so the attribute names of the result are too.
+  lock = readResult.bundlerLock // {
+    gemsByName = builtins.listToAttrs (
+      map (gem: {
+        inherit (gem) name;
+        value = gem;
+      }) readResult.bundlerLock.gems
+    );
+  };
+  # The downloads of this system.
+  downloads = purifier.entriesFor stdenv.hostPlatform.system checkedLock;
+  files = builtins.filter (d: !(d ? git)) downloads;
+  gitCheckouts = builtins.filter (d: d ? git) downloads;
 
   # The gemspec of a gem of the project: <name>.gemspec in its directory, or
   # the directory's only gemspec.
@@ -127,7 +144,6 @@ let
   # many placeholder directories as the deepest `../` climbs, so that each
   # external path resolves inside the build's tree.
   hasExternal = lock.externalPaths != [ ];
-  missingExternal = lib.filter (p: !(externalPaths ? ${p})) lock.externalPaths;
   # The number of leading `..` segments of a path.
   climbs =
     p:
@@ -187,84 +203,7 @@ let
     cp --no-preserve=mode ${gemfileLock} Gemfile.lock
   '';
 
-  # The definition hash of the project as it is now, computed as
-  # `bundler-purifier lock` computes it (see definition_hash there): the
-  # Gemfile, Gemfile.lock, every gemspec outside hidden directories and
-  # vendor/, and the gemspecs at the top of each external path source.
-  gemspecsIn =
-    dir: rel:
-    lib.concatLists (
-      lib.mapAttrsToList (
-        name: type:
-        let
-          path = if rel == "" then name else "${rel}/${name}";
-        in
-        if lib.hasPrefix "." name then
-          [ ]
-        else if type == "directory" then
-          (if path == "vendor" then [ ] else gemspecsIn "${dir}/${name}" path)
-        else if lib.hasSuffix ".gemspec" name then
-          [ path ]
-        else
-          [ ]
-      ) (builtins.readDir dir)
-    );
-  gemfileLockFile =
-    if gemfileLock != null then
-      [
-        {
-          rel = "Gemfile.lock";
-          file = gemfileLock;
-        }
-      ]
-    else if builtins.pathExists (srcFile "Gemfile.lock") then
-      [
-        {
-          rel = "Gemfile.lock";
-          file = srcFile "Gemfile.lock";
-        }
-      ]
-    else
-      [ ];
-  definitionFiles =
-    map (rel: {
-      inherit rel;
-      file = srcFile rel;
-    }) ([ "Gemfile" ] ++ gemspecsIn (srcFile "") "")
-    ++ gemfileLockFile
-    ++ lib.concatMap (
-      p:
-      map
-        (name: {
-          rel = "${p}/${name}";
-          file = "${externalPaths.${p}}/${name}";
-        })
-        (
-          lib.attrNames (
-            lib.filterAttrs (name: type: type != "directory" && lib.hasSuffix ".gemspec" name) (
-              builtins.readDir externalPaths.${p}
-            )
-          )
-        )
-    ) (lib.filter (p: externalPaths ? ${p}) lock.externalPaths);
-  definitionHash = builtins.convertHash {
-    hash = builtins.hashString "sha256" (
-      lib.concatMapStrings (
-        f:
-        let
-          content = builtins.readFile f.file;
-        in
-        "${f.rel}\n${toString (builtins.stringLength content)}\n${content}\n"
-      ) (lib.sort (a: b: a.rel < b.rel) (lib.unique definitionFiles))
-    );
-    hashAlgo = "sha256";
-    toHashFormat = "sri";
-  };
-  definitionCurrent =
-    definitionHash == lock.definitionHash
-    || throw "bundler-purifier: the Gemfile, Gemfile.lock or a gemspec changed since ${lockName} was made. Run `bundler-purifier lock` in the project root.";
-
-  rubyVersion = lib.versions.splitVersion lock.ruby;
+  rubyVersion = lib.versions.splitVersion (builtins.seq checkedLock lock.ruby);
   rubyAttr = "ruby_${builtins.elemAt rubyVersion 0}_${builtins.elemAt rubyVersion 1}";
   ruby' =
     if ruby != null then
@@ -278,7 +217,8 @@ let
       lib
       pkgs
       purifier
-      lock
+      files
+      gitCheckouts
       fetchers
       ;
   };
@@ -357,7 +297,7 @@ let
     # hooks would put other gem versions on RUBYLIB.
     else
       lib.filter (input: !(lib.isAttrs input && (input ? gemName || input ? rubyEngine))) evaluated.value
-  ) lock.files;
+  ) files;
 
   # The libraries the gems may load at run time: gems such as ruby-vips
   # open a library through FFI by its name, so the shell and the `bundle`
@@ -369,11 +309,7 @@ let
   # gemspecs; git sources get one in setupBundler.
   usesGemspecs = lock.gems != [ ] || hasExternal;
 
-  app =
-    assert
-      missingExternal == [ ]
-      || throw "bundler-purifier: Gemfile.lock has path sources outside the project (${lib.concatStringsSep ", " missingExternal}); pass their trees as `externalPaths`.";
-    assert definitionCurrent;
+  app = builtins.seq checkedLock (
     stdenv.mkDerivation {
       inherit name;
       src = filteredSrc;
@@ -435,9 +371,10 @@ let
       '';
       passthru = {
         ruby = ruby';
-        inherit lock gemCache projectDir;
+        inherit gemCache projectDir;
       };
-    };
+    }
+  );
 
   # `bundle` for the app: the locked Bundler, on the app's Gemfile, so
   # `bundle exec` runs the app with its installed bundle.
@@ -459,38 +396,36 @@ let
     gem:
     let
       fileName = "${gem.name}-${gem.version}.gem";
-      package =
-        assert definitionCurrent;
-        stdenv.mkDerivation {
-          pname = gem.name;
-          inherit (gem) version;
-          src = filteredSrc;
-          nativeBuildInputs = [
-            ruby'
-            gitMinimal
-          ];
-          dontConfigure = true;
-          dontFixup = true;
-          buildPhase = ''
-            runHook preBuild
-            export HOME="$TMPDIR/home"
-            mkdir -p "$HOME"
-            ${prepareSource}
-            ${gitRepositoryForGemspecs}
-            cd ${lib.escapeShellArg gem.dir}
-            gem build ${lib.escapeShellArg (baseNameOf (gemspecOf gem))} --output ${lib.escapeShellArg fileName}
-            runHook postBuild
-          '';
-          installPhase = ''
-            runHook preInstall
-            mkdir -p "$out"
-            cp ${lib.escapeShellArg fileName} "$out/"
-            runHook postInstall
-          '';
-          passthru = {
-            gemFile = "${package}/${fileName}";
-          };
+      package = builtins.seq checkedLock stdenv.mkDerivation {
+        pname = gem.name;
+        inherit (gem) version;
+        src = filteredSrc;
+        nativeBuildInputs = [
+          ruby'
+          gitMinimal
+        ];
+        dontConfigure = true;
+        dontFixup = true;
+        buildPhase = ''
+          runHook preBuild
+          export HOME="$TMPDIR/home"
+          mkdir -p "$HOME"
+          ${prepareSource}
+          ${gitRepositoryForGemspecs}
+          cd ${lib.escapeShellArg gem.dir}
+          gem build ${lib.escapeShellArg (baseNameOf (gemspecOf gem))} --output ${lib.escapeShellArg fileName}
+          runHook postBuild
+        '';
+        installPhase = ''
+          runHook preInstall
+          mkdir -p "$out"
+          cp ${lib.escapeShellArg fileName} "$out/"
+          runHook postInstall
+        '';
+        passthru = {
+          gemFile = "${package}/${fileName}";
         };
+      };
     in
     package;
 
@@ -524,7 +459,8 @@ assert
     else
       throw "bundler-purifier: the project has no gemspec, so it has no release for `bundler-purifier publish` to push.";
 
-  fetches = lock.downloads;
+  # Every download of the lock, for every system.
+  fetches = checkedLock.entries;
 
   # Each executable that a gemspec of the project declares, run with the
   # app's bundle: `bin/<name>`.

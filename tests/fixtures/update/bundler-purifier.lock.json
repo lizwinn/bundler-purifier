@@ -1,0 +1,10 @@
+{
+  "version": 3,
+  "definitionHash": "sha256-VaenJUffufh/ossdlN9GCZt5Tt5bm0xhION6ef2uU8o=",
+  "ruby": "3.4.11",
+  "bundlerHash": "sha256-olZ1/70FWuEYZ2bMHhILTPYliOiKu1m5nFfiKxxVyes=",
+  "gemHashes": {
+    "rainbow-3.0.0.gem": "sha256-E85P/DyU+3qEIRfsq9zcX/f6J77BXqRBN7n5q+V1Yi0="
+  },
+  "contentHash": "sha256-ZIT7GLMhNrUEf/EwGg67Me5ARjb1Q2uEZmiLeDTDWI0="
+}

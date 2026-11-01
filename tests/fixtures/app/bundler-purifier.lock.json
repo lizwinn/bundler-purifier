@@ -1,9 +1,11 @@
 {
   "version": 3,
-  "definitionHash": "sha256-9waaYrAHBs7t4yKbPrO6BmLmrMcujZSVfVFyuew9++M=",
+  "definitionHash": "sha256-u9j1pGeW3z0ROpprPXc50ri+5xKqahQpWDSU8Ycdak8=",
   "ruby": "3.4.11",
   "bundlerHash": "sha256-olZ1/70FWuEYZ2bMHhILTPYliOiKu1m5nFfiKxxVyes=",
   "gemHashes": {
+    "language_server-protocol-3.17.0.6.gem": "sha256-XvLAwTj4Jn4bxjHTMoNH01T5ZySwryLyx5UWEgRDt/A=",
+    "logger-1.7.0.gem": "sha256-GW7ex8xEtmz7QPl1XOEbOS8h95Z2lq8V0nTd5+3/AgM=",
     "msgpack-1.8.7.gem": "sha256-3+/sdhtfkEfm6NldLH+K9LNyXZhKAZQq3FM6qBmi3zM=",
     "nokogiri-1.19.4-aarch64-linux-gnu.gem": "sha256-Emn7ZEpt5AUFelPdXHYrEgm0PKdCT4OUVNPbxnfDGo8=",
     "nokogiri-1.19.4-aarch64-linux-musl.gem": "sha256-NcZbnOcrO7AyB72+cGeRUBncGMG5tZE5aEvWaQ/dAa8=",
@@ -13,11 +15,15 @@
     "nokogiri-1.19.4-x86_64-darwin.gem": "sha256-f9FwV9Ph8A6ZVKdLPNdlldPUpe8jO37ZWZBHwgT3BVE=",
     "nokogiri-1.19.4-x86_64-linux-gnu.gem": "sha256-N5+uRAsokV4/GddSzi3PhGXtKy++/Sp8oN1Je8mBoGo=",
     "nokogiri-1.19.4-x86_64-linux-musl.gem": "sha256-F9+3wfoZSuAvv3xRp6/I0ngEWrP9rP2G+R0C17J0Rws=",
+    "prism-1.9.0.gem": "sha256-e1MMap+SwkMAAUkZydy8BVv0zfUewwrtCZsGzWZ074U=",
     "racc-1.8.1.gem": "sha256-Sn9pKWkdvsi1IJoLNzvCYUiCtV/F0uRHohqqaRMD1i8=",
-    "rake-13.4.2.gem": "sha256-y4JbK9Xx+Okco3vdtLmq80VVG0cx2mKUm+AC+okoNwE="
+    "rake-13.4.2.gem": "sha256-y4JbK9Xx+Okco3vdtLmq80VVG0cx2mKUm+AC+okoNwE=",
+    "rbs-4.2.0.gem": "sha256-Ufe4htzAW8CeELkB2qaoGCn2rcAxAdbKnqSqxhA+BnQ=",
+    "ruby-lsp-0.26.11.gem": "sha256-TMjxWHI3/4yQMWgLVJHfkBqCVZ7qoa6Whj/+cAsyWD0=",
+    "tsort-0.2.0.gem": "sha256-llCnk/aFmkO2ZBZxJ495z+rWCscUFIqr5OPwBgSACJ8="
   },
   "gitHashes": {
     "accffb58fb0dedd17d68f484031a571fd905acb3": "sha256-stEG3N0aIUMHoPxFsrtxgUbwno5EcCYD4jNJkwzv/MI="
   },
-  "contentHash": "sha256-lfDbIH+yupznodAA+1BGY/NYU5mgd3PhUvjId82a79Q="
+  "contentHash": "sha256-76P35FasPWFz3uiSFBFxfQMP5WwN6n7+VkojkFgz2Lg="
 }

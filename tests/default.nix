@@ -200,6 +200,11 @@ in
   # The library's test run, its `tests`.
   fixture-library-tests = library.tests;
 
+  # The library's gem file and installed app as they are, which CI's
+  # conformance-rebuild and publish build again and compare.
+  fixture-library-gem = library.packages.greeting;
+  fixture-library-app = library.packages.app;
+
   # The library's package is the gem file its gemspec builds, with the
   # files `git ls-files` lists, and it is the release.
   fixture-library =

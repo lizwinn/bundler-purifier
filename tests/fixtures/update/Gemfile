@@ -1,0 +1,5 @@
+source "https://rubygems.org"
+
+# Gemfile.lock pins rainbow at 3.0.0, an old version that this Gemfile
+# allows to move: conformance-update updates it.
+gem "rainbow", ">= 3.0"

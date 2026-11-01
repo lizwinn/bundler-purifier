@@ -18,6 +18,8 @@ PATH
 GEM
   remote: https://rubygems.org/
   specs:
+    language_server-protocol (3.17.0.6)
+    logger (1.7.0)
     msgpack (1.8.7)
     nokogiri (1.19.4-aarch64-linux-gnu)
       racc (~> 1.4)
@@ -35,8 +37,18 @@ GEM
       racc (~> 1.4)
     nokogiri (1.19.4-x86_64-linux-musl)
       racc (~> 1.4)
+    prism (1.9.0)
     racc (1.8.1)
     rake (13.4.2)
+    rbs (4.2.0)
+      logger
+      prism (>= 1.6.0)
+      tsort
+    ruby-lsp (0.26.11)
+      language_server-protocol (~> 3.17.0)
+      prism (>= 1.2, < 2.0)
+      rbs (>= 3, < 5)
+    tsort (0.2.0)
 
 PLATFORMS
   aarch64-linux-gnu
@@ -54,6 +66,7 @@ DEPENDENCIES
   nokogiri
   rainbow!
   rake
+  ruby-lsp
   shared!
 
 BUNDLED WITH

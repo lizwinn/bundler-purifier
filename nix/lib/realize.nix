@@ -16,13 +16,29 @@
 }:
 let
   pkgs = import nixpkgs { };
+  readLock = import ./read-lock.nix { inherit (pkgs) lib; };
   buildBundlerProject = import ./build-bundler-project.nix {
     inherit (pkgs) lib;
+    inherit readLock;
     inherit ((builtins.getFlake purifierFlake).lib) purifier;
   };
+  src = /. + root;
+  lockFile' = /. + lockFile;
+  # The path sources outside the project are on disk beside it, at the
+  # paths Gemfile.lock gives them.
+  externalPaths = builtins.listToAttrs (
+    map
+      (p: {
+        name = p;
+        value = /. + "${root}/${p}";
+      })
+      (readLock {
+        inherit src;
+        lockFile = lockFile';
+      }).bundlerLock.externalPaths
+  );
 in
 buildBundlerProject {
-  inherit pkgs;
-  src = /. + root;
-  lockFile = /. + lockFile;
+  inherit pkgs src externalPaths;
+  lockFile = lockFile';
 }

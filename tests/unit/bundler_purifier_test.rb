@@ -162,6 +162,30 @@ class BundlerPurifierTest < Minitest::Test
     assert_equal expected, BP.content_hash(a)
   end
 
+  def test_gemfile_lock_checksums_reads_the_checksums_section
+    text = <<~LOCK
+      GEM
+        remote: https://rubygems.org/
+        specs:
+          rake (13.0.0)
+
+      CHECKSUMS
+        greeting (0.2.0)
+        nokogiri (1.19.4-x86_64-linux-gnu) sha256=#{"ab" * 32}
+        rake (13.0.0) sha256=#{"01" * 32}
+
+      BUNDLED WITH
+        2.6.9
+    LOCK
+    assert_equal({ "nokogiri (1.19.4-x86_64-linux-gnu)" => "ab" * 32, "rake (13.0.0)" => "01" * 32 },
+                 BP.gemfile_lock_checksums(text))
+    assert_equal({}, BP.gemfile_lock_checksums(LOCKFILE))
+  end
+
+  def test_hex_to_sri
+    assert_equal "sha256-#{Digest::SHA256.base64digest("x")}", BP.hex_to_sri(Digest::SHA256.hexdigest("x"))
+  end
+
   def test_project_ruby_version_prefers_dot_ruby_version
     assert_equal "3.3.6", BP.project_ruby_version(LOCKFILE)
     write(".ruby-version", "ruby-3.2.4\n")

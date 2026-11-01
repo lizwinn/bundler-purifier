@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: MIT
 #
-# Runs on x86_64-linux and aarch64-linux: the flake's checks (the CLI
-# build, the sandboxed builds of the fixtures under tests/fixtures and a
-# run of each, and the formatting), then tests/interactive.sh for what runs
-# outside the sandbox (the lock run, `install` and `push`).
+# Runs on x86_64-linux and aarch64-linux: the flake's checks (the
+# sandboxed conformance checks, the unit tests, the fixtures, Lobsters and
+# the formatting), then each conformance check of the nix-purifiers
+# contract that needs the network or Nix itself, and the publish test, as
+# jobs of the same names (tests/ci).
 name: check
 
 on:
@@ -21,9 +22,22 @@ jobs:
       matrix:
         runner: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v31
       - run: nix flake check -L
-      - run: tests/interactive.sh
+
+  ci-script:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+        job: [conformance-relock, conformance-rebuild, conformance-offline, conformance-update, publish]
+    name: ${{ matrix.job }} (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: tests/ci/${{ matrix.job }}.sh
