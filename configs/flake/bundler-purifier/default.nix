@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-{ ... }:
+{ closure-lib, ... }:
 {
   config,
   inputs,
@@ -8,22 +8,20 @@
 }:
 {
 
-  imports = [ inputs.flake-parts.flakeModules.partitions ];
+  imports = [
+    inputs.flake-parts.flakeModules.partitions
+    closure-lib.caisson.modules.flake."purifier/purifier-packages"
+  ];
 
   debug = false;
+
+  # The flake's `packages` output is the derivations of the scope
+  # `pkgs.bundler-purifier`, which the shared library's module publishes.
+  purifier.scope = "bundler-purifier";
+
   caisson = {
     libOverlays.exported = libOverlays: {
       inherit (libOverlays) default;
-    };
-
-    # The packages are the `default` entry of this flake's package overlay
-    # registry (pkg-overlays/): the package set applies it by default, and
-    # the flake exports it as `pkgOverlays` and as the plain
-    # `overlays.default`. The scope `pkgs.bundler-purifier` holds the
-    # builder, a function that is not a package, so the `packages` output
-    # is the derivations of the scope, set below.
-    nixpkgs = {
-      packages.export.enabled = false;
     };
   };
 
@@ -32,9 +30,7 @@
   perSystem =
     { pkgs, ... }:
     {
-      packages = lib.filterAttrs (_: lib.isDerivation) pkgs.bundler-purifier // {
-        default = pkgs.bundler-purifier.cli;
-      };
+      packages.default = pkgs.bundler-purifier.cli;
     };
 
   partitionedAttrs.checks = "checks";
