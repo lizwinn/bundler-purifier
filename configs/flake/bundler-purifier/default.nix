@@ -21,7 +21,7 @@
     # the flake exports it as `pkgOverlays` and as the plain
     # `overlays.default`. The scope `pkgs.bundler-purifier` holds the
     # builder, a function that is not a package, so the `packages` output
-    # is not the whole scope.
+    # is the derivations of the scope, set below.
     nixpkgs = {
       packages.export.enabled = false;
     };
@@ -32,8 +32,7 @@
   perSystem =
     { pkgs, ... }:
     {
-      packages = {
-        inherit (pkgs.bundler-purifier) cli;
+      packages = lib.filterAttrs (_: lib.isDerivation) pkgs.bundler-purifier // {
         default = pkgs.bundler-purifier.cli;
       };
     };
