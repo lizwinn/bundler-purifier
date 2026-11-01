@@ -204,23 +204,20 @@ each time `bundle exec` starts; in the installed app a gemspec that calls
 `git ls-files` runs outside a repository, so git prints "not a git
 repository" to stderr, and the app runs normally.
 
-## Real-world projects
+## Examples
+
+CI locks and builds this real project, as an example of a full-size app:
 
 - **[Lobsters](https://github.com/lobsters/lobsters)** at
-  `cb2b28371dbf5549b6fad293a6c2dfc8ec7a0320`: the Rails app behind
-  lobste.rs, 180 gems on Ruby 4.0.9 and Bundler 4.0.3, with sqlite3 compile
-  flags in its `.bundle/config`. Its `Gemfile.lock` has `CHECKSUMS`, so its
-  purifier lockfile holds only its version, Ruby, Bundler's hash and the
-  two hashes of the contract. The lockfile lives in this repository,
-  `tests/real/lobsters/`, and the check `real-lobsters` builds Lobsters
-  from it and loads Rails and libvips through its bundle. A lock from
-  scratch took 20 seconds, a relock after adding a gem 25 seconds, and a
-  lock with nothing changed under a second. The offline install took three
-  minutes, most of it compiling native extensions, and a model spec passed
-  on it. Lobsters brought about five changes: the lock run picking the
-  project's Ruby, the kept `.bundle/config` and its quoting, nixpkgs' gem
-  configuration for libraries such as libyaml without its nixpkgs gems,
-  `LD_LIBRARY_PATH` for ruby-vips, and the dev shell.
+  `cb2b28371dbf5549b6fad293a6c2dfc8ec7a0320`, the Rails app behind
+  lobste.rs: 180 gems on Ruby 4.0.9 and Bundler 4.0.3, with sqlite3
+  compile flags in its `.bundle/config` and ruby-vips, which opens libvips
+  at run time. Its build is kept outside its tree: the purifier lockfile
+  lives in this repository, in `tests/real/lobsters/`. Its `Gemfile.lock`
+  has `CHECKSUMS`, so that lockfile holds only its version, Ruby,
+  Bundler's hash and the two hashes of the contract. The check
+  `real-lobsters` builds Lobsters from it and loads Rails and libvips
+  through its bundle. A lock from scratch takes about 20 seconds.
 
 ## Credits
 
