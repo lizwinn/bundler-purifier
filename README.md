@@ -21,21 +21,24 @@ In the project root:
 nix run github:nix-purifiers/bundler-purifier -- lock
 ```
 
-Commit `bundler-purifier.lock.json`. A Nix build on Linux needs a Linux
+Commit `bundler-purifier.lock.json` and `Gemfile.lock` to the project's
+repository. We recommend this setup, and the builder and the commands look
+for both files there by default. A Nix build on Linux needs a Linux
 platform in `Gemfile.lock`; `lock` warns when there is none, and
 `bundle lock --add-platform x86_64-linux aarch64-linux` adds them. With
 `bundle lock --add-checksums` (Bundler 2.5 and later, the default from
 Bundler 4), `Gemfile.lock` records every gem's hash, and the purifier
 lockfile shrinks to a few fields.
 
-The flake's `overlays.default` adds `buildBundlerProject` to a package
-set, and a package written for `callPackage` takes it by name, like any
-other builder:
+The flake's `overlays.default` adds one attribute to a package set, the
+scope `bundler-purifier`. The scope holds the builder
+`buildBundlerProject` and the command `cli`. A package written for
+`callPackage` takes the scope by name:
 
 ```nix
 # package.nix
-{ buildBundlerProject }:
-(buildBundlerProject { src = ./.; }).packages.app
+{ bundler-purifier }:
+(bundler-purifier.buildBundlerProject { src = ./.; }).packages.app
 ```
 
 A flake that builds the project applies the overlay to its nixpkgs:
@@ -52,7 +55,7 @@ A flake that builds the project applies the overlay to its nixpkgs:
         inherit system;
         overlays = [ bundler-purifier.overlays.default ];
       };
-      project = pkgs.buildBundlerProject { src = ./.; };
+      project = pkgs.bundler-purifier.buildBundlerProject { src = ./.; };
     in
     {
       packages.${system} = project.packages;
@@ -79,12 +82,15 @@ It also has `executables.<name>`, each executable the gemspecs declare, and
 `lib.bundler-purifier.readLock` reads the lock into the contract's shape
 for tools such as SBOM generators.
 
-The builder takes what it needs from the package set (`stdenv`,
-`mkShell`, nixpkgs' Rubies and gem configuration, and the shared
-library's fetchers), so `buildBundlerProject.override` replaces any of
-it. `nix/lib/build-bundler-project.nix` documents the builder's own
-arguments. `ruby` replaces nixpkgs' Ruby of the minor version the lock was made
-with. `nativeBuildInputs` and `buildInputs` give native extensions what
+The builder takes what it needs from the package set by name: `stdenv`,
+`mkShell`, `defaultGemConfig`, the Rubies `ruby_3_4` and `ruby_4_0`, and
+the packages the shared library's fetchers build with. It takes no
+`pkgs`. `bundler-purifier.buildBundlerProject.override` replaces any of
+them for one builder, and `bundler-purifier.overrideScope` replaces what
+the whole scope holds. `nix/lib/build-bundler-project.nix` documents the
+builder's own arguments. A build runs on the Ruby of the minor version the
+lock was made with, and `ruby` replaces it, as it must for a version the
+builder has no Ruby for. `nativeBuildInputs` and `buildInputs` give native extensions what
 they compile and link against, beyond the libraries nixpkgs' gem
 configuration names for the locked gems (`useGemConfig`). The libraries
 are on `LD_LIBRARY_PATH` in the shell and the `bundle` wrapper, for gems
@@ -93,10 +99,33 @@ groups out of `app`. `fetchers` replaces nixpkgs' `fetchurl` or `fetchgit`,
 for a gem server or a git repository that needs credentials, or a mirror.
 `externalPaths` gives the trees of path sources outside the project.
 
-A project that keeps its build outside its tree keeps the purifier
-lockfile outside it and passes it as `lockFile`; `Gemfile.lock` stays in
-the tree. The commands then take `--lockfile <path>` or
-`BUNDLER_PURIFIER_LOCKFILE`.
+### An external build
+
+A project can instead keep its build outside its repository. The flake
+that calls the builder keeps the purifier lockfile and passes it as
+`lockFile`. It can also keep its own copy of `Gemfile.lock` and pass it as
+`gemfileLock`, which the build then uses in place of the copy in `src`.
+That suits a project whose committed `Gemfile.lock` is missing, out of
+date or written by another version of Bundler, and which the flake builds
+from its source as published.
+
+```nix
+bundler-purifier.buildBundlerProject {
+  src = project;
+  lockFile = ./bundler-purifier.lock.json;
+  gemfileLock = ./Gemfile.lock;
+}
+```
+
+`readLock` takes the same `lockFile` and `gemfileLock`. The commands take
+`--lockfile <path>` or `BUNDLER_PURIFIER_LOCKFILE` for the purifier
+lockfile, and `--tool-lockfile <path>` or
+`BUNDLER_PURIFIER_TOOL_LOCKFILE` for `Gemfile.lock`. With the second,
+`lock` and `update` write `Gemfile.lock` at that path and leave the copy in
+the tree as it is. `lock` starts from the copy in the tree when the file at
+that path does not exist yet. The dev shell of the flake that calls the
+builder can set both variables, so a developer in that shell runs the
+commands with no flag.
 
 ## Development loop
 
@@ -259,7 +288,7 @@ the flake passes it in `buildInputs`:
         inherit system;
         overlays = [ bundler-purifier.overlays.default ];
       };
-      lobsters = pkgs.buildBundlerProject {
+      lobsters = pkgs.bundler-purifier.buildBundlerProject {
         src = ./.;
         name = "lobsters";
         buildInputs = [ pkgs.vips ];

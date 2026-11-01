@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-{ callPackage, ... }:
+{ callPackage, lib, ... }:
 let
   # The shared nix-purifiers library as this flake pins it, as a locked flake
   # reference: the CLI builds outside the flake and loads the library's
@@ -10,6 +10,13 @@ let
   purifierRef = "github:${pinned.owner}/${pinned.repo}/${pinned.rev}?narHash=${escape pinned.narHash}";
 in
 {
+  # The builder (nix/lib/build-bundler-project.nix), with the shared
+  # library's `purifier` namespace and readLock from this flake's library.
+  buildBundlerProject = callPackage ../nix/lib/build-bundler-project.nix {
+    inherit (lib) purifier;
+    inherit (lib.bundler-purifier) readLock;
+  };
+
   # The bundler-purifier command.
   cli = callPackage ./cli {
     version = builtins.replaceStrings [ "\n" ] [ "" ] (builtins.readFile ../version.txt);

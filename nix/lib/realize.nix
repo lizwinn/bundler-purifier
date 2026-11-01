@@ -9,6 +9,8 @@
   root,
   # The purifier lockfile, as an absolute path in a string.
   lockFile,
+  # Gemfile.lock, as an absolute path in a string.
+  gemfileLock,
   # The nixpkgs the CLI was built with.
   nixpkgs,
   # The shared nix-purifiers library as a locked flake reference.
@@ -23,6 +25,7 @@ let
   };
   src = /. + root;
   lockFile' = /. + lockFile;
+  gemfileLock' = /. + gemfileLock;
   # The path sources outside the project are on disk beside it, at the
   # paths Gemfile.lock gives them.
   externalPaths = builtins.listToAttrs (
@@ -34,10 +37,12 @@ let
       (readLock {
         inherit src;
         lockFile = lockFile';
+        gemfileLock = gemfileLock';
       }).bundlerLock.externalPaths
   );
 in
 buildBundlerProject {
   inherit src externalPaths;
   lockFile = lockFile';
+  gemfileLock = gemfileLock';
 }

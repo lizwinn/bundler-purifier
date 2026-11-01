@@ -20,4 +20,17 @@ echo "== relock of external"
 diff -u "$repo/tests/fixtures/external/project/Gemfile.lock" "$work/fixtures/external/project/Gemfile.lock"
 diff -u "$repo/tests/fixtures/external/bundler-purifier.lock.json" \
   "$work/fixtures/external/bundler-purifier.lock.json"
+echo "== relock of external with its Gemfile.lock outside the tree"
+(cd "$work/fixtures/external/project" && "$cli" --lockfile ../replaced/bundler-purifier.lock.json \
+  --tool-lockfile ../replaced/Gemfile.lock lock --force)
+diff -u "$repo/tests/fixtures/external/replaced/Gemfile.lock" "$work/fixtures/external/replaced/Gemfile.lock"
+diff -u "$repo/tests/fixtures/external/replaced/bundler-purifier.lock.json" \
+  "$work/fixtures/external/replaced/bundler-purifier.lock.json"
+diff -u "$repo/tests/fixtures/external/project/Gemfile.lock" "$work/fixtures/external/project/Gemfile.lock"
+
+echo "== relock of external from the tree's Gemfile.lock to a new outside path"
+(cd "$work/fixtures/external/project" && "$cli" --lockfile ../fresh/bundler-purifier.lock.json \
+  --tool-lockfile ../fresh/Gemfile.lock lock)
+diff -u "$repo/tests/fixtures/external/project/Gemfile.lock" "$work/fixtures/external/fresh/Gemfile.lock"
+diff -u "$repo/tests/fixtures/external/project/Gemfile.lock" "$work/fixtures/external/project/Gemfile.lock"
 echo "conformance-relock passed"

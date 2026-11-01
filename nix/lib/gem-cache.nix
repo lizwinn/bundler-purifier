@@ -11,19 +11,20 @@
 # leaves in a cached git source, which the library's `tree` does not write.
 {
   lib,
-  pkgs,
   purifier,
   # The file entries and the git entries to cache.
   files,
   gitCheckouts,
+  # The arguments of fetchEntry: the fetchers, and the packages its steps
+  # after a fetch build with, `runCommand` among them.
   fetchers,
 }:
 let
-  fetch = purifier.fetchEntry ({ inherit pkgs; } // fetchers);
+  fetch = purifier.fetchEntry fetchers;
 in
 # The manifests go to the builder as files, since a large bundle locks
 # hundreds of gems and the list would not fit in an environment variable.
-pkgs.runCommand "bundler-gem-cache"
+fetchers.runCommand "bundler-gem-cache"
   {
     files = lib.concatMapStrings (d: "${d.path}\t${fetch d}\n") files;
     gitCheckouts = lib.concatMapStrings (d: "${d.path}\t${fetch d}\n") gitCheckouts;

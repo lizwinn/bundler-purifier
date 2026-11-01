@@ -211,6 +211,60 @@ class BundlerPurifierTest < Minitest::Test
                  Bundler::YAMLSerializer.load(File.read(File.join(out, "config"))))
   end
 
+  def with_tool_lockfile(path)
+    BP.instance_variable_set(:@gemfile_lock_path, nil)
+    BP.instance_variable_set(:@tool_lockfile_option, path)
+    yield
+  ensure
+    BP.instance_variable_set(:@gemfile_lock_path, nil)
+    BP.instance_variable_set(:@tool_lockfile_option, nil)
+  end
+
+  def test_outside_gemfile_lock_is_worked_on_in_the_tree_and_written_back
+    write("Gemfile.lock", "tree copy\n")
+    outside = File.join(@dir, "outside", "Gemfile.lock")
+    write("outside/Gemfile.lock", "outside copy\n")
+    with_tool_lockfile(outside) do
+      seen = BP.with_gemfile_lock_in_tree do
+        File.write(File.join(@dir, "Gemfile.lock"), "#{File.read(File.join(@dir, "Gemfile.lock"))}resolved\n")
+        BP.gemfile_lock_path
+      end
+      assert_equal File.join(@dir, "Gemfile.lock"), seen
+    end
+    assert_equal "tree copy\n", File.read(File.join(@dir, "Gemfile.lock"))
+    assert_equal "outside copy\nresolved\n", File.read(outside)
+  end
+
+  def test_outside_gemfile_lock_starts_from_the_tree_copy_when_it_does_not_exist
+    write("Gemfile.lock", "tree copy\n")
+    outside = File.join(@dir, "fresh", "Gemfile.lock")
+    with_tool_lockfile(outside) { BP.with_gemfile_lock_in_tree { nil } }
+    assert_equal "tree copy\n", File.read(outside)
+    assert_equal "tree copy\n", File.read(File.join(@dir, "Gemfile.lock"))
+  end
+
+  def test_the_trees_gemfile_lock_comes_back_when_the_block_fails
+    write("Gemfile.lock", "tree copy\n")
+    write("outside/Gemfile.lock", "outside copy\n")
+    outside = File.join(@dir, "outside", "Gemfile.lock")
+    with_tool_lockfile(outside) do
+      assert_raises(RuntimeError) { BP.with_gemfile_lock_in_tree { raise "bundle failed" } }
+    end
+    assert_equal "tree copy\n", File.read(File.join(@dir, "Gemfile.lock"))
+    assert_equal "outside copy\n", File.read(outside)
+  end
+
+  def test_definition_hash_reads_the_outside_gemfile_lock_under_its_own_name
+    write("Gemfile.lock", "tree copy\n")
+    write("outside/Gemfile.lock", "tree copy\n")
+    in_tree = BP.definition_hash
+    with_tool_lockfile(File.join(@dir, "outside", "Gemfile.lock")) do
+      assert_equal in_tree, BP.definition_hash
+      File.write(File.join(@dir, "outside", "Gemfile.lock"), "changed\n")
+      refute_equal in_tree, BP.definition_hash
+    end
+  end
+
   def test_check_platforms_warns_without_a_linux_platform
     _, err = capture_io { BP.check_platforms(Bundler::LockfileParser.new(LOCKFILE.sub("  ruby\n", "  arm64-darwin\n"))) }
     assert_match(/bundle lock --add-platform x86_64-linux aarch64-linux/, err)

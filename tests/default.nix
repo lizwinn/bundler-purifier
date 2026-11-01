@@ -9,7 +9,8 @@
 # as jobs of the same names, from tests/ci.
 {
   pkgs,
-  # The flake's default package overlay, which adds buildBundlerProject.
+  # The flake's default package overlay, which adds the scope
+  # bundler-purifier with buildBundlerProject.
   overlay,
   cli,
   # The source of Lobsters at its pinned commit (tests/dependencies).
@@ -20,7 +21,7 @@ let
 
   # Every fixture builds the way a user's package does: through
   # buildBundlerProject of a package set the overlay applies to.
-  build = (pkgs.extend overlay).buildBundlerProject;
+  build = (pkgs.extend overlay).bundler-purifier.buildBundlerProject;
 
   # Runs `bundle exec ruby main.rb` in the project of a build and checks
   # its output.
@@ -65,6 +66,16 @@ let
     src = ./fixtures/external/project;
     name = "fixture-external";
     lockFile = ./fixtures/external/bundler-purifier.lock.json;
+  };
+
+  # The same project with its Gemfile.lock replaced from outside `src`: the
+  # replacement pins rainbow 3.0.0, and its purifier lockfile was written
+  # by `bundler-purifier --tool-lockfile ... lock`.
+  externalReplaced = build {
+    src = ./fixtures/external/project;
+    name = "fixture-external-replaced";
+    lockFile = ./fixtures/external/replaced/bundler-purifier.lock.json;
+    gemfileLock = ./fixtures/external/replaced/Gemfile.lock;
   };
 
   # A real-world project: Lobsters, built from its own Gemfile.lock and the
@@ -175,8 +186,21 @@ in
   conformance-missing = failsWith "missing" "run bundler-purifier lock";
   conformance-malformed = failsWith "malformed" "run bundler-purifier lock --force";
 
-  # The fixture kept external builds from the lockfiles outside its source.
-  conformance-external = runsMain "conformance-external" external "external purified";
+  # The fixture kept external builds from the purifier lockfile outside its
+  # source, and with its Gemfile.lock replaced from outside too.
+  conformance-external =
+    pkgs.runCommand "conformance-external"
+      {
+        committed =
+          runsMain "conformance-external-committed" external
+            "external purified with rainbow 3.1.1";
+        replaced =
+          runsMain "conformance-external-replaced" externalReplaced
+            "external purified with rainbow 3.0.0";
+      }
+      ''
+        touch "$out"
+      '';
 
   # The unit tests of the lock run's logic (tests/unit).
   unit =

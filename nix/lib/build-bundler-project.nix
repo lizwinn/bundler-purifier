@@ -5,13 +5,16 @@
 #
 # The file is a package for callPackage: the first argument set is what it
 # takes from the package set, and the result is the builder. The
-# bundler-purifier overlay (`overlays.default`) adds it to the package set
-# as `buildBundlerProject`, so a package written for callPackage takes it
-# like any other dependency:
+# bundler-purifier overlay (`overlays.default`) adds it to the scope
+# `pkgs.bundler-purifier` as `buildBundlerProject`, so a package written
+# for callPackage takes the scope like any other dependency:
 #
-#   { buildBundlerProject }: (buildBundlerProject { src = ./.; }).packages.app
+#   { bundler-purifier }:
+#   (bundler-purifier.buildBundlerProject { src = ./.; }).packages.app
 #
-# and `buildBundlerProject.override` replaces what it takes from the set.
+# `bundler-purifier.buildBundlerProject.override` replaces what the builder
+# takes from the package set, and `bundler-purifier.overrideScope` replaces
+# what the scope holds.
 #
 # The builder returns the attributes of the nix-purifiers contract:
 #
@@ -50,9 +53,19 @@
   symlinkJoin,
   mkShell,
   defaultGemConfig,
-  # The package set, for nixpkgs' Ruby of the minor version a lock was made
-  # with (ruby_<major>_<minor>), and for the shared library's fetchers.
-  pkgs,
+  # nixpkgs' Rubies by minor version. A build runs on the one of the minor
+  # version its lock was made with, unless it passes `ruby`.
+  ruby_3_4 ? null,
+  ruby_4_0 ? null,
+  # The fetchers and the packages that the shared library's fetchEntry
+  # builds with.
+  fetchurl,
+  fetchgit,
+  runCommand,
+  unzip,
+  zstd,
+  python3,
+  writeText,
   # The `purifier` namespace of the shared nix-purifiers library, which the
   # bundler-purifier overlay passes.
   purifier,
@@ -64,9 +77,12 @@
   src,
   # The lockfile that `bundler-purifier lock` writes. It may lie outside
   # `src`, kept by the flake that calls the builder; a lockFile outside
-  # `src` takes the place of any copy in it. Gemfile.lock is always the one
-  # in `src`.
+  # `src` takes the place of any copy in it.
   lockFile ? src + "/bundler-purifier.lock.json",
+  # The project's Gemfile.lock. A flake that keeps its own copy outside
+  # `src` passes it here, and the builds use it in place of the copy in
+  # `src`.
+  gemfileLock ? src + "/Gemfile.lock",
   # Fetchers in place of nixpkgs' fetchers, passed to the shared library's
   # fetchEntry: `fetchurl` for a gem server that needs credentials or a
   # mirror, `fetchgit` for a private git repository.
@@ -83,7 +99,7 @@
   nativeBuildInputs ? [ ],
   buildInputs ? [ ],
   # Adds the build inputs that nixpkgs' gem configuration
-  # (pkgs.defaultGemConfig) names for each locked gem, such as libyaml for
+  # (defaultGemConfig) names for each locked gem, such as libyaml for
   # psych, so that common native extensions compile without arguments.
   useGemConfig ? true,
   # Bundler groups that `app` leaves out, as `bundle config set without`.
@@ -111,6 +127,7 @@ let
     inherit
       src
       lockFile
+      gemfileLock
       externalPaths
       ;
   };
@@ -210,22 +227,39 @@ let
 
   rubyVersion = lib.versions.splitVersion (builtins.seq checkedLock lock.ruby);
   rubyAttr = "ruby_${builtins.elemAt rubyVersion 0}_${builtins.elemAt rubyVersion 1}";
+  rubies = lib.filterAttrs (_: r: r != null) { inherit ruby_3_4 ruby_4_0; };
   ruby' =
     if ruby != null then
       ruby
     else
-      pkgs.${rubyAttr}
-        or (throw "bundler-purifier: nixpkgs has no ${rubyAttr} for the Ruby ${lock.ruby} the lock was made with; pass `ruby`.");
+      rubies.${rubyAttr}
+        or (throw "bundler-purifier: the builder has no ${rubyAttr} for the Ruby ${lock.ruby} the lock was made with; pass `ruby`.");
+
+  # The source as the builds see it: with `gemfileLock` in place of the
+  # Gemfile.lock of `src` when the flake keeps its own copy.
+  prepareSource = lib.optionalString (toString gemfileLock != toString (srcFile "Gemfile.lock")) ''
+    cp --no-preserve=mode ${gemfileLock} Gemfile.lock
+  '';
 
   gemCache = import ./gem-cache.nix {
     inherit
       lib
-      pkgs
       purifier
       files
       gitCheckouts
-      fetchers
       ;
+    fetchers = {
+      inherit
+        fetchurl
+        fetchgit
+        runCommand
+        unzip
+        zstd
+        python3
+        writeText
+        ;
+    }
+    // fetchers;
   };
 
   # The environment shared by every build. Bundler's own configuration
@@ -327,6 +361,7 @@ let
       dontConfigure = true;
       buildPhase = ''
         runHook preBuild
+        ${prepareSource}
         ${lib.optionalString hasExternal placeExternalPaths}
         ${lib.optionalString usesGemspecs ''
           # The repository covers the external path sources too, which sit
@@ -414,6 +449,7 @@ let
           runHook preBuild
           export HOME="$TMPDIR/home"
           mkdir -p "$HOME"
+          ${prepareSource}
           ${gitRepositoryForGemspecs}
           cd ${lib.escapeShellArg gem.dir}
           gem build ${lib.escapeShellArg (baseNameOf (gemspecOf gem))} --output ${lib.escapeShellArg fileName}

@@ -17,7 +17,10 @@
 # The commands run in the project root, where the Gemfile is. The purifier
 # lockfile lies beside Gemfile.lock, or where `--lockfile <path>` or
 # BUNDLER_PURIFIER_LOCKFILE says, for a project whose build is kept
-# outside it. The package that installs this script sets
+# outside it. Such a build may keep its own Gemfile.lock too, where
+# `--tool-lockfile <path>` or BUNDLER_PURIFIER_TOOL_LOCKFILE says: `lock`
+# and `update` then write Gemfile.lock there and put the tree's copy back,
+# and the checks and Nix builds read it. The package that installs this script sets
 # BUNDLER_PURIFIER_LIB (its Nix library), BUNDLER_PURIFIER_SHARED_FLAKE
 # (the shared nix-purifiers library) and BUNDLER_PURIFIER_NIXPKGS (the
 # nixpkgs it builds with).
@@ -73,6 +76,53 @@ module BundlerPurifier
     @lockfile_path ||= File.expand_path(@lockfile_option || ENV["BUNDLER_PURIFIER_LOCKFILE"] || File.join(root, LOCK_FILE))
   end
 
+  # The Gemfile.lock in the project tree, the one Bundler reads.
+  def tree_gemfile_lock
+    File.join(root, "Gemfile.lock")
+  end
+
+  # The Gemfile.lock the commands read and write: `--tool-lockfile`, then
+  # BUNDLER_PURIFIER_TOOL_LOCKFILE, then the one in the tree. While
+  # with_gemfile_lock_in_tree runs Bundler, it is the one in the tree.
+  def gemfile_lock_path
+    return tree_gemfile_lock if @gemfile_lock_in_tree
+    @gemfile_lock_path ||= File.expand_path(@tool_lockfile_option || ENV["BUNDLER_PURIFIER_TOOL_LOCKFILE"] || tree_gemfile_lock)
+  end
+
+  # Runs the block with the outside Gemfile.lock in the tree, since Bundler
+  # reads and writes only the Gemfile.lock beside the Gemfile. The block
+  # starts from the outside copy, or from the tree's copy when the outside
+  # one does not exist yet. When the block succeeds, its Gemfile.lock goes
+  # to the outside path. The tree's own copy is put back in any case.
+  def with_gemfile_lock_in_tree
+    outside = gemfile_lock_path
+    return yield if @gemfile_lock_in_tree || outside == tree_gemfile_lock
+
+    original = File.file?(tree_gemfile_lock) ? File.binread(tree_gemfile_lock) : nil
+    start = File.file?(outside) ? File.binread(outside) : original
+    begin
+      if start
+        File.binwrite(tree_gemfile_lock, start)
+      else
+        FileUtils.rm_f(tree_gemfile_lock)
+      end
+      @gemfile_lock_in_tree = true
+      result = yield
+      if File.file?(tree_gemfile_lock)
+        FileUtils.mkdir_p(File.dirname(outside))
+        File.binwrite(outside, File.binread(tree_gemfile_lock))
+      end
+      result
+    ensure
+      @gemfile_lock_in_tree = false
+      if original
+        File.binwrite(tree_gemfile_lock, original)
+      else
+        FileUtils.rm_f(tree_gemfile_lock)
+      end
+    end
+  end
+
   # Where prefetch keeps its GC roots and the gem cache: beside the
   # purifier lockfile.
   def state_dir
@@ -100,10 +150,11 @@ module BundlerPurifier
   # made from the same definition stays current. buildBundlerProject
   # computes the same hash when it evaluates, to tell a stale lock: each
   # file contributes its name, its length in bytes and its content, each
-  # followed by a newline, in the byte order of the names.
+  # followed by a newline, in the byte order of the names. Gemfile.lock
+  # keeps its name when it lies outside the tree.
   def definition_hash
     files = ["Gemfile", "Gemfile.lock"] + Dir.glob("**/*.gemspec", base: root).reject { |f| f.start_with?("vendor/") }
-    lockfile = File.join(root, "Gemfile.lock")
+    lockfile = gemfile_lock_path
     if File.file?(lockfile)
       external_paths(Bundler::LockfileParser.new(File.read(lockfile))).each do |p|
         files += Dir.glob("*.gemspec", base: File.expand_path(p, root)).map { |g| File.join(p, g) }
@@ -111,7 +162,7 @@ module BundlerPurifier
     end
     digest = Digest::SHA256.new
     files.uniq.sort.each do |f|
-      path = File.expand_path(f, root)
+      path = f == "Gemfile.lock" ? lockfile : File.expand_path(f, root)
       next unless File.file?(path)
       content = File.binread(path)
       digest << "#{f}\n#{content.bytesize}\n" << content << "\n"
@@ -156,7 +207,7 @@ module BundlerPurifier
       version = File.read(dot).strip.delete_prefix("ruby-")
       return version unless version.empty?
     end
-    lockfile_text ||= File.file?(File.join(root, "Gemfile.lock")) ? File.read(File.join(root, "Gemfile.lock")) : ""
+    lockfile_text ||= File.file?(gemfile_lock_path) ? File.read(gemfile_lock_path) : ""
     lockfile_text[/^RUBY VERSION\n\s+ruby (\d+\.\d+(?:\.\d+)?)/, 1]
   end
 
@@ -237,8 +288,13 @@ module BundlerPurifier
   # that its CHECKSUMS section does not list, of Bundler's own gem and of
   # git checkouts; the remote of a gem in a section with several remotes;
   # mirrors; the executables of the project's gemspecs; and the Ruby the
-  # lock run used.
+  # lock run used. With an outside Gemfile.lock, the lock run works on it
+  # in the tree (with_gemfile_lock_in_tree).
   def lock(force:)
+    with_gemfile_lock_in_tree { lock_in_tree(force: force) }
+  end
+
+  def lock_in_tree(force:)
     if !force && File.file?(lockfile_path)
       current = begin
         JSON.parse(File.read(lockfile_path))
@@ -255,14 +311,14 @@ module BundlerPurifier
       env = lock_env(state)
       write_lock_run_config(env["BUNDLE_APP_CONFIG"])
 
-      unless File.file?(File.join(root, "Gemfile.lock"))
+      unless File.file?(gemfile_lock_path)
         puts "bundler-purifier: no Gemfile.lock; resolving with bundle lock"
         run!(env, "bundle", "lock", chdir: root)
       end
 
       run!(env, "bundle", "cache", "--all-platforms", "--no-install", chdir: root)
       cache = env["BUNDLE_CACHE_PATH"]
-      text = File.read(File.join(root, "Gemfile.lock"))
+      text = File.read(gemfile_lock_path)
       parser = Bundler::LockfileParser.new(text)
       checksums = gemfile_lock_checksums(text)
       check_platforms(parser)
@@ -430,7 +486,7 @@ module BundlerPurifier
   # gem in a section with several remotes, and the hashes of Bundler's own
   # gem and of each git checkout.
   def check_complete!(lock)
-    text = File.read(File.join(root, "Gemfile.lock"))
+    text = File.read(gemfile_lock_path)
     parser = Bundler::LockfileParser.new(text)
     checksums = gemfile_lock_checksums(text)
     absent = []
@@ -466,7 +522,7 @@ module BundlerPurifier
   # The arguments that select the builder's result for this project in
   # nix/lib/realize.nix.
   def realize_args
-    ["--argstr", "root", root, "--argstr", "lockFile", lockfile_path,
+    ["--argstr", "root", root, "--argstr", "lockFile", lockfile_path, "--argstr", "gemfileLock", gemfile_lock_path,
      "--arg", "nixpkgs", nixpkgs, "--argstr", "purifierFlake", shared_flake]
   end
 
@@ -514,12 +570,14 @@ module BundlerPurifier
   # gem or the named ones, in the environment of the lock run, then relocks
   # the purifier lockfile against the result.
   def update(gems)
-    Dir.mktmpdir("bundler-purifier-update") do |state|
-      env = lock_env(state)
-      write_lock_run_config(env["BUNDLE_APP_CONFIG"])
-      run!(env, "bundle", "update", *gems, chdir: root)
+    with_gemfile_lock_in_tree do
+      Dir.mktmpdir("bundler-purifier-update") do |state|
+        env = lock_env(state)
+        write_lock_run_config(env["BUNDLE_APP_CONFIG"])
+        run!(env, "bundle", "update", *gems, chdir: root)
+      end
+      lock(force: true)
     end
-    lock(force: true)
   end
 
   # Pushes each gem file of the `release` that Nix built with `gem push`.
@@ -532,7 +590,7 @@ module BundlerPurifier
   end
 
   USAGE = <<~USAGE
-    usage: bundler-purifier [--lockfile PATH] COMMAND
+    usage: bundler-purifier [--lockfile PATH] [--tool-lockfile PATH] COMMAND
       lock [--force]   record what Gemfile.lock cannot, when the Gemfile,
                        Gemfile.lock or a gemspec changed (or always)
       update [GEM...]  re-resolve every gem, or the named ones, with
@@ -542,14 +600,20 @@ module BundlerPurifier
       publish [ARGS]   push the gems that Nix built (ARGS go to gem push)
   USAGE
 
+  # Removes `name PATH` or `name=PATH` from argv and returns the path.
+  def take_option(argv, name)
+    if (i = argv.index(name))
+      argv.delete_at(i)
+      argv.delete_at(i) || fail!("#{name} needs a path")
+    elsif (i = argv.index { |a| a.start_with?("#{name}=") })
+      argv.delete_at(i).delete_prefix("#{name}=")
+    end
+  end
+
   def main(argv)
     argv = argv.dup
-    if (i = argv.index("--lockfile"))
-      argv.delete_at(i)
-      @lockfile_option = argv.delete_at(i) || fail!("--lockfile needs a path")
-    elsif (i = argv.index { |a| a.start_with?("--lockfile=") })
-      @lockfile_option = argv.delete_at(i).delete_prefix("--lockfile=")
-    end
+    @lockfile_option = take_option(argv, "--lockfile")
+    @tool_lockfile_option = take_option(argv, "--tool-lockfile")
     command = argv.shift
     case command
     when "lock" then lock(force: argv.delete("--force") ? true : false)

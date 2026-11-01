@@ -2,8 +2,8 @@
 #
 # The `bundler-purifier` library namespace of the nix-purifiers contract:
 # `readLock` (nix/lib/read-lock.nix), the lock of a Bundler project in
-# memory. The builder is a package, which the package overlay adds as
-# `buildBundlerProject`.
+# memory. The builder is a package in the scope `pkgs.bundler-purifier`,
+# which the package overlay adds.
 { ... }:
 {
 

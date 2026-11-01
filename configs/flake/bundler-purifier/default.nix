@@ -19,18 +19,23 @@
     # The packages are the `default` entry of this flake's package overlay
     # registry (pkg-overlays/): the package set applies it by default, and
     # the flake exports it as `pkgOverlays` and as the plain
-    # `overlays.default`.
+    # `overlays.default`. The scope `pkgs.bundler-purifier` holds the
+    # builder, a function that is not a package, so the `packages` output
+    # is not the whole scope.
     nixpkgs = {
-      packages.export.enabled = true;
+      packages.export.enabled = false;
     };
   };
 
   # `nix run github:nix-purifiers/bundler-purifier -- lock` locks the
   # project in the current directory.
   perSystem =
-    { config, ... }:
+    { pkgs, ... }:
     {
-      packages.default = config.packages.cli;
+      packages = {
+        inherit (pkgs.bundler-purifier) cli;
+        default = pkgs.bundler-purifier.cli;
+      };
     };
 
   partitionedAttrs.checks = "checks";
