@@ -11,7 +11,7 @@ Nix files.
 bundler-purifier is part of [nix-purifiers](https://nix-purifiers.github.io)
 and meets its [contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
 The shared [purifier](https://github.com/nix-purifiers/purifier) library
-fetches the downloads.
+fetches the downloads. It builds on x86_64-linux and aarch64-linux.
 
 ## Quickstart
 
@@ -137,9 +137,9 @@ group :development do
 end
 ```
 
-Then `bundler-purifier lock` and `bundler-purifier prefetch`, and start the
-editor from `nix develop .bundler-purifier/shell`, or point its Ruby LSP
-extension at that shell. Ruby LSP uses the project's bundle when the
+Then run `bundler-purifier lock` and `bundler-purifier prefetch`, and start
+the editor from `nix develop .bundler-purifier/shell`, or point its Ruby
+LSP extension at that shell. Ruby LSP uses the project's bundle when the
 Gemfile has it, and needs no download of its own.
 
 ## Errors and fixes
@@ -159,8 +159,8 @@ with a message that names the fix:
   `externalPaths`.
 
 A gem added to the Gemfile while offline fails in Bundler's own
-resolution, before bundler-purifier sees it, with Bundler's message:
-Bundler resolves before any hook it offers runs. Lock while online.
+resolution, with Bundler's message, since Bundler resolves before any hook
+it offers runs. Lock while online.
 
 ## Sources supported and refused
 
@@ -206,18 +206,63 @@ repository" to stderr, and the app runs normally.
 
 ## Examples
 
-CI locks and builds this real project, as an example of a full-size app:
+### A Rails app: Lobsters
 
-- **[Lobsters](https://github.com/lobsters/lobsters)** at
-  `cb2b28371dbf5549b6fad293a6c2dfc8ec7a0320`, the Rails app behind
-  lobste.rs: 180 gems on Ruby 4.0.9 and Bundler 4.0.3, with sqlite3
-  compile flags in its `.bundle/config` and ruby-vips, which opens libvips
-  at run time. Its build is kept outside its tree: the purifier lockfile
-  lives in this repository, in `tests/real/lobsters/`. Its `Gemfile.lock`
-  has `CHECKSUMS`, so that lockfile holds only its version, Ruby,
-  Bundler's hash and the two hashes of the contract. The check
-  `real-lobsters` builds Lobsters from it and loads Rails and libvips
-  through its bundle. A lock from scratch takes about 20 seconds.
+[Lobsters](https://github.com/lobsters/lobsters), the Rails app behind
+lobste.rs, asks for its own Ruby in `.ruby-version` and keeps compile flags
+for sqlite3 in its `.bundle/config`. bundler-purifier takes both as they
+are. In a checkout of Lobsters:
+
+```zsh
+nix run github:nix-purifiers/bundler-purifier -- lock
+```
+
+The lock run builds nixpkgs' Ruby of the version Lobsters asks for.
+Lobsters' `Gemfile.lock` has a `CHECKSUMS` section, so
+`bundler-purifier.lock.json` holds only a few fields. A flake beside it
+builds the app. Lobsters' image processing loads libvips through FFI, so
+the flake passes it in `buildInputs`:
+
+```nix
+{
+  inputs.bundler-purifier.url = "github:nix-purifiers/bundler-purifier";
+  inputs.nixpkgs.follows = "bundler-purifier/nixpkgs";
+
+  outputs = { nixpkgs, bundler-purifier, ... }:
+    let
+      system = "x86_64-linux";
+      pkgs = nixpkgs.legacyPackages.${system};
+      lobsters = bundler-purifier.lib.bundler-purifier.buildBundlerProject {
+        inherit pkgs;
+        src = ./.;
+        name = "lobsters";
+        buildInputs = [ pkgs.vips ];
+      };
+    in
+    {
+      packages.${system} = lobsters.packages;
+      devShells.${system}.default = lobsters.devShell;
+    };
+}
+```
+
+`nix build '.#app'` builds Lobsters with its bundle, and
+`nix shell '.#bundle' -c bundle exec rails --version`, run in the app's
+store path, starts Rails from it. For day-to-day work on Lobsters:
+
+```zsh
+nix run github:nix-purifiers/bundler-purifier -- prefetch
+nix develop .bundler-purifier/shell
+cp config/database.yml.sample config/database.yml
+RAILS_ENV=test bundle exec rails db:create db:schema:load
+bundle exec rspec
+```
+
+To build Lobsters without adding files to its tree, keep the flake and
+`bundler-purifier.lock.json` in a separate repository, take Lobsters as a
+flake input with `flake = false`, and pass its source as `src` and the
+lockfile as `lockFile`. Lock it from the checkout with
+`bundler-purifier --lockfile <path> lock`.
 
 ## Credits
 
@@ -227,19 +272,6 @@ with empty caches that records every download, a builder that runs the
 tool itself in the sandbox from that lockfile, an offline mode on the same
 locked files, and publishing what Nix built. The purifier idea was inspired
 by nixcloud's [cargo (libnix)](https://github.com/nixcloud/cargo).
-
-## Tests
-
-`nix flake check` runs the sandboxed conformance checks
-(`conformance-stale`, `-tampered`, `-missing`, `-malformed` and
-`-external`), the unit tests of the lock run's logic (`tests/unit`), the
-fixtures under `tests/fixtures` (gem servers with native extensions and
-platform gems, git, git with submodules, paths inside and outside the
-project, an external build), and Lobsters. CI runs it and the scripts of
-`tests/ci` on x86_64-linux and aarch64-linux: `conformance-relock`,
-`conformance-rebuild`, `conformance-offline` (the everyday loop after a
-prefetch, in a network namespace with no network), `conformance-update`
-and `publish`.
 
 ## License
 
