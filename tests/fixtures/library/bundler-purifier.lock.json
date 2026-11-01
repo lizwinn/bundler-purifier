@@ -3,10 +3,11 @@
   "ruby": "3.4.11",
   "bundler": "2.6.9",
   "platforms": [
+    "aarch64-linux",
     "ruby",
     "x86_64-linux"
   ],
-  "definitionHash": "sha256-bz4mvJT0yPP4WnGGl7IPb0ScELXPIxDIlMJmdOVr7sA=",
+  "definitionHash": "sha256-cN/z0gdnHe7V0NJmTVdGRw2vMTDdE/fnscnUVnrcK8c=",
   "downloads": [
     {
       "path": "bundler-2.6.9.gem",
@@ -31,5 +32,6 @@
       "dir": ".",
       "gemspec": "greeting.gemspec"
     }
-  ]
+  ],
+  "externalPaths": []
 }

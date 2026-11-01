@@ -11,6 +11,7 @@ GEM
     rake (13.4.2)
 
 PLATFORMS
+  aarch64-linux
   ruby
   x86_64-linux
 

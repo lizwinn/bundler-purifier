@@ -17,7 +17,9 @@
 #   gemCache          the gem cache of every locked gem and git source, as
 #                     Bundler's `vendor/cache` holds them
 #   app               the project with its bundle installed in deployment
-#                     mode under vendor/bundle
+#                     mode under vendor/bundle; with external path
+#                     sources, the project is at `app.projectDir` inside
+#                     it, beside those sources
 #   bundle            `bin/bundle` for the app: the locked Bundler on the
 #                     app's Gemfile, so `bundle exec` runs the app
 #   packages.<name>   the gem file built from each gemspec of the project,
@@ -56,9 +58,45 @@
   # `filter` of builtins.path. The default leaves out version control,
   # Bundler's local state and build outputs.
   srcFilter ? null,
+  # The trees of the path sources outside the project, by the path
+  # Gemfile.lock gives them (relative to the project root), such as
+  # { "../shared" = inputs.shared; }. The lock lists them as externalPaths.
+  externalPaths ? { },
 }:
 let
   lock = import ./lock.nix { inherit lockFile; };
+
+  # The build lays the project and its external path sources out at the
+  # same relative positions as in the checkout: the project goes below as
+  # many placeholder directories as the deepest `../` climbs, so that each
+  # external path resolves inside the build's tree.
+  hasExternal = lock.externalPaths != [ ];
+  missingExternal = lib.filter (p: !(externalPaths ? ${p})) lock.externalPaths;
+  # The number of leading `..` segments of a path.
+  climbs =
+    p:
+    let
+      count =
+        segments: if segments != [ ] && lib.head segments == ".." then 1 + count (lib.tail segments) else 0;
+    in
+    count (lib.splitString "/" p);
+  depth = lib.foldl' lib.max 0 (map climbs lock.externalPaths);
+  # The project's directory in `app` (and in the build's tree).
+  projectDir =
+    if hasExternal then
+      lib.concatMapStrings (i: "_parent${toString i}/") (lib.range 1 depth) + "project"
+    else
+      ".";
+  placeExternalPaths = ''
+    tree="$TMPDIR/tree"
+    mkdir -p "$tree/${projectDir}"
+    cp -r . "$tree/${projectDir}"
+    ${lib.concatMapStrings (p: ''
+      mkdir -p "$(dirname "$tree/${projectDir}/${p}")"
+      cp -r --no-preserve=mode ${externalPaths.${p}} "$tree/${projectDir}/${p}"
+    '') lock.externalPaths}
+    cd "$tree/${projectDir}"
+  '';
 
   # Version control, Bundler's local configuration and installs, and the
   # results of nix build never take part in a build. vendor/cache is the
@@ -99,6 +137,9 @@ let
   setupBundler = ''
     export HOME="$TMPDIR/home"
     export GEM_HOME="$TMPDIR/gems"
+    # The sandbox sets no locale, and Ruby would read gemspecs and file
+    # lists as US-ASCII.
+    export LC_ALL=C.UTF-8
     # The binstub that gem install writes starts with `#!ruby`, which the
     # sandbox cannot resolve, so `bundle` runs it through Ruby. The later
     # phases run in the same shell and keep the function.
@@ -108,6 +149,14 @@ let
     # Bundler copies what it installs from the cache and leaves marker
     # files in it, so the cache is a writable tree of links into the store.
     cp -r --no-preserve=mode ${gemCache} vendor/cache
+    # Bundler loads the gemspec of a git source from its cached checkout,
+    # and many of those gemspecs call `git ls-files`. Each checkout becomes
+    # a repository of its files, submodule contents included.
+    for checkout in vendor/cache/*/.bundlecache; do
+      if [ -e "$checkout" ]; then
+        (cd "$(dirname "$checkout")" && ${gitRepositoryForGemspecs})
+      fi
+    done
     # The locked Bundler, installed from the cache, so the build runs the
     # Bundler version of BUNDLED WITH and Bundler has nothing to fetch.
     gem install --local --no-document --install-dir "$GEM_HOME" --bindir "$GEM_HOME/bin" \
@@ -128,57 +177,90 @@ let
     git add -A
   '';
 
-  app = stdenv.mkDerivation {
-    inherit name;
-    src = filteredSrc;
-    nativeBuildInputs = [ ruby' ] ++ lib.optional (lock.gems != [ ]) gitMinimal ++ nativeBuildInputs;
-    inherit buildInputs doCheck;
-    dontConfigure = true;
-    buildPhase = ''
-      runHook preBuild
-      ${lib.optionalString (lock.gems != [ ]) gitRepositoryForGemspecs}
-      ${setupBundler}
-      bundle install --local
-      # RubyGems writes gem executables with `#! ruby`, which no kernel
-      # resolves, so `bundle exec` could not start them. They get the
-      # absolute path of this Ruby.
-      for bin in vendor/bundle/ruby/*/bin/*; do
-        if [ -f "$bin" ]; then
-          sed -i -E '1s|^#! ?ruby( .*)?$|#!${ruby'}/bin/ruby\1|' "$bin"
-        fi
-      done
-      runHook postBuild
-    '';
-    checkPhase = ''
-      runHook preCheck
-      ${checkCommand}
-      runHook postCheck
-    '';
-    installPhase = ''
-      runHook preInstall
-      # The locked Bundler, for the `bundle` wrapper to run the app with.
-      gem install --local --no-document --install-dir .bundle/purifier/bundler \
-        vendor/cache/bundler-${lock.bundler}.gem
-      # The gem cache served the install; the output keeps the installed
-      # bundle under vendor/bundle. The repository for the gemspecs goes.
-      rm -rf vendor/cache .git
-      mkdir -p "$out"
-      cp -r . "$out"
-      runHook postInstall
-    '';
-    passthru = {
-      ruby = ruby';
-      inherit lock gemCache;
+  # The project and its external path sources need a repository for their
+  # gemspecs; git sources get one in setupBundler.
+  usesGemspecs = lock.gems != [ ] || hasExternal;
+
+  app =
+    assert
+      missingExternal == [ ]
+      || throw "bundler-purifier: Gemfile.lock has path sources outside the project (${lib.concatStringsSep ", " missingExternal}); pass their trees as `externalPaths`.";
+    stdenv.mkDerivation {
+      inherit name;
+      src = filteredSrc;
+      nativeBuildInputs = [
+        ruby'
+        gitMinimal
+      ]
+      ++ nativeBuildInputs;
+      inherit buildInputs doCheck;
+      dontConfigure = true;
+      buildPhase = ''
+        runHook preBuild
+        ${lib.optionalString hasExternal placeExternalPaths}
+        ${lib.optionalString usesGemspecs ''
+          # The repository covers the external path sources too, which sit
+          # beside the project in the build's tree.
+          (cd ${if hasExternal then ''"$tree"'' else "."} && ${gitRepositoryForGemspecs})
+        ''}
+        ${setupBundler}
+        bundle install --local
+        # RubyGems writes gem executables with `#! ruby`, which no kernel
+        # resolves, so `bundle exec` could not start them. They get the
+        # absolute path of this Ruby.
+        for bin in vendor/bundle/ruby/*/bin/*; do
+          if [ -f "$bin" ]; then
+            sed -i -E '1s|^#! ?ruby( .*)?$|#!${ruby'}/bin/ruby\1|' "$bin"
+          fi
+        done
+        runHook postBuild
+      '';
+      checkPhase = ''
+        runHook preCheck
+        ${checkCommand}
+        runHook postCheck
+      '';
+      installPhase = ''
+        runHook preInstall
+        # The locked Bundler, for the `bundle` wrapper to run the app with.
+        gem install --local --no-document --install-dir .bundle/purifier/bundler \
+          vendor/cache/bundler-${lock.bundler}.gem
+        # The gem cache served the install; the output keeps the installed
+        # bundle under vendor/bundle. The repository for the gemspecs goes.
+        rm -rf vendor/cache
+        mkdir -p "$out"
+        ${
+          if hasExternal then
+            ''
+              rm -rf "$tree/.git"
+              cp -r "$tree/." "$out"
+            ''
+          else
+            ''
+              rm -rf .git
+              cp -r . "$out"
+            ''
+        }
+        runHook postInstall
+      '';
+      passthru = {
+        ruby = ruby';
+        inherit lock gemCache projectDir;
+      };
     };
-  };
 
   # `bundle` for the app: the locked Bundler, on the app's Gemfile, so
   # `bundle exec` runs the app with its installed bundle.
   bundle = writeShellScriptBin "bundle" ''
-    export GEM_HOME=${app}/.bundle/purifier/bundler
+    export GEM_HOME=${app}/${projectDir}/.bundle/purifier/bundler
     export GEM_PATH="$GEM_HOME"
-    export BUNDLE_GEMFILE=${app}/Gemfile
-    export PATH=${ruby'}/bin:"$PATH"
+    export BUNDLE_GEMFILE=${app}/${projectDir}/Gemfile
+    if [ -z "''${LC_ALL:-}''${LANG:-}" ]; then
+      export LANG=C.UTF-8
+    fi
+    # Bundler evaluates the gemspecs of path sources on every run, and many
+    # of them call `git ls-files`.
+    export PATH=${ruby'}/bin:"$PATH":${gitMinimal}/bin
     exec ruby "$GEM_HOME/bin/bundle" "$@"
   '';
 

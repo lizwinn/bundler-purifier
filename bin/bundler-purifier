@@ -26,10 +26,6 @@ module BundlerPurifier
   LOCK_VERSION = 1
   STATE_DIR = ".bundle/purifier"
 
-  # Top-level entries of the project that the lock run does not copy:
-  # version control, Bundler's local state, and installs.
-  SKIP_IN_COPY = %w[.git .bundle vendor/bundle vendor/cache tmp log node_modules].freeze
-
   module_function
 
   def fail!(message)
@@ -60,39 +56,55 @@ module BundlerPurifier
     end
   end
 
+  # The path sources of a Gemfile.lock outside the project root, as the
+  # lockfile writes them (relative to the root). Bundler's git source is a
+  # kind of path source, which this leaves out.
+  def external_paths(parser)
+    paths = parser.sources.grep(Bundler::Source::Path).reject { |s| s.is_a?(Bundler::Source::Git) }
+    paths.map { |s| s.path.to_s }.uniq.reject do |p|
+      dir = File.expand_path(p, root)
+      dir == root || dir.start_with?("#{root}/")
+    end.sort
+  end
+
   # The files whose content decides what the lock holds: the Gemfile, its
-  # lockfile, and the gemspecs of the project. A lockfile made from the same
-  # definition stays current.
+  # lockfile, and the gemspecs of the project and of its path sources
+  # outside the project. A lockfile made from the same definition stays
+  # current.
   def definition_hash
     files = ["Gemfile", "Gemfile.lock"] + Dir.glob("**/*.gemspec", base: root).reject { |f| f.start_with?("vendor/") }
+    lockfile = File.join(root, "Gemfile.lock")
+    if File.file?(lockfile)
+      external_paths(Bundler::LockfileParser.new(File.read(lockfile))).each do |p|
+        files += Dir.glob("*.gemspec", base: File.expand_path(p, root)).map { |g| File.join(p, g) }
+      end
+    end
     digest = Digest::SHA256.new
     files.sort.each do |f|
-      path = File.join(root, f)
+      path = File.expand_path(f, root)
       next unless File.file?(path)
       digest << f << "\0" << File.binread(path) << "\0"
     end
     "sha256-#{digest.base64digest}"
   end
 
-  def copy_project(to)
-    Dir.children(root).each do |entry|
-      next if SKIP_IN_COPY.include?(entry)
-      FileUtils.cp_r(File.join(root, entry), to)
-    end
-    # vendor/ may hold more than the skipped vendor/bundle and vendor/cache.
-    %w[vendor/bundle vendor/cache].each { |p| FileUtils.rm_rf(File.join(to, p)) }
-  end
-
-  # Runs Bundler with empty gem, user and configuration directories, so
-  # that what it fetches is everything the project needs. The lock run uses
-  # the Ruby that runs this script, whose version the lock records.
+  # Runs Bundler in the project with empty gem, user, configuration and
+  # cache directories, so that what it fetches is everything the project
+  # needs. The project's own .bundle/config does not apply, so every group
+  # is locked. The lock run uses the Ruby that runs this script, whose
+  # version the lock records.
   def lock_env(state)
     {
       "PATH" => "#{RbConfig::CONFIG["bindir"]}:#{ENV["PATH"]}",
       "HOME" => File.join(state, "home"),
+      "XDG_CACHE_HOME" => File.join(state, "xdg-cache"),
+      "XDG_CONFIG_HOME" => File.join(state, "xdg-config"),
+      "XDG_DATA_HOME" => File.join(state, "xdg-data"),
+      "XDG_STATE_HOME" => File.join(state, "xdg-state"),
       "GEM_HOME" => File.join(state, "gems"),
       "BUNDLE_USER_HOME" => File.join(state, "bundle-home"),
       "BUNDLE_APP_CONFIG" => File.join(state, "bundle-config"),
+      "BUNDLE_CACHE_PATH" => File.join(state, "cache"),
       "BUNDLE_CACHE_ALL" => "true",
       "BUNDLE_CACHE_ALL_PLATFORMS" => "true",
       "BUNDLE_GEMFILE" => nil,
@@ -117,23 +129,24 @@ module BundlerPurifier
       end
     end
 
-    Dir.mktmpdir("bundler-purifier-lock") do |tmp|
-      work = File.join(tmp, "project")
-      state = File.join(tmp, "state")
-      FileUtils.mkdir_p([work, state])
-      copy_project(work)
+    Dir.mktmpdir("bundler-purifier-lock") do |state|
       env = lock_env(state)
 
       unless File.file?(File.join(root, "Gemfile.lock"))
         puts "bundler-purifier: no Gemfile.lock; resolving with bundle lock"
-        run!(env, "bundle", "lock", chdir: work)
-        FileUtils.cp(File.join(work, "Gemfile.lock"), File.join(root, "Gemfile.lock"))
+        run!(env, "bundle", "lock", chdir: root)
       end
 
-      run!(env, "bundle", "cache", "--all-platforms", "--no-install", chdir: work)
-      cache = File.join(work, "vendor", "cache")
+      run!(env, "bundle", "cache", "--all-platforms", "--no-install", chdir: root)
+      cache = env["BUNDLE_CACHE_PATH"]
       parser = Bundler::LockfileParser.new(File.read(File.join(root, "Gemfile.lock")))
       check_platforms(parser)
+      absolute = external_paths(parser).select { |p| p.start_with?("/") }
+      unless absolute.empty?
+        fail!("Gemfile.lock names path sources by absolute path (#{absolute.join(", ")}). A Nix build runs in a sandbox " \
+              "where it can create files only in its own build directory, so it cannot put a tree at an absolute path. " \
+              "Give these sources as paths relative to the Gemfile.")
+      end
 
       downloads = {}
       gems = []
@@ -144,9 +157,8 @@ module BundlerPurifier
           file = "#{spec.full_name}.gem"
           path = File.join(cache, file)
           fail!("bundle cache did not write #{file}") unless File.file?(path)
-          remotes = source.remotes
-          warn "bundler-purifier: #{spec.name} comes from a source with several remotes; locking it at #{remotes.first}" if remotes.size > 1
-          downloads[file] = { "path" => file, "url" => "#{remote_url(remotes.first)}gems/#{file}", "hash" => sri(path) }
+          hash = sri(path)
+          downloads[file] = { "path" => file, "url" => gem_url(source.remotes, file, hash), "hash" => hash }
         when Bundler::Source::Git
           dirs = Dir.glob("*-#{source.revision[0, 12]}", base: cache).select { |d| File.directory?(File.join(cache, d)) }
           fail!("bundle cache did not write the git source #{source.uri} at #{source.revision}") unless dirs.size == 1
@@ -155,10 +167,9 @@ module BundlerPurifier
           downloads[dirs.first] = { "path" => dirs.first, "git" => git, "hash" => git_nar_hash(git) }
         when Bundler::Source::Path
           dir = File.expand_path(source.path.to_s, root)
-          unless dir == root || dir.start_with?("#{root}/")
-            warn "bundler-purifier: #{spec.name} comes from #{dir}, outside the project; a Nix build cannot reach it"
-            next
-          end
+          # A path source outside the project is a tree the Nix build
+          # takes as an argument (externalPaths); it builds no gem.
+          next unless dir == root || dir.start_with?("#{root}/")
           next if gems.any? { |g| g["name"] == spec.name }
           rel = dir == root ? "." : dir.delete_prefix("#{root}/")
           gemspec = Dir.glob("#{spec.name}.gemspec", base: dir).first || Dir.glob("*.gemspec", base: dir).first
@@ -173,7 +184,7 @@ module BundlerPurifier
       end
 
       bundler = parser.bundler_version&.to_s || Bundler::VERSION
-      downloads["bundler-#{bundler}.gem"] ||= lock_bundler(bundler, env, work, state)
+      downloads["bundler-#{bundler}.gem"] ||= lock_bundler(bundler, env, state)
 
       lockfile = {
         "version" => LOCK_VERSION,
@@ -183,6 +194,7 @@ module BundlerPurifier
         "definitionHash" => definition_hash,
         "downloads" => downloads.values.sort_by { |d| d["path"] },
         "gems" => gems.sort_by { |g| g["name"] },
+        "externalPaths" => external_paths(parser),
       }
       File.write(File.join(root, LOCK_FILE), JSON.pretty_generate(lockfile) + "\n")
       puts "bundler-purifier: wrote #{LOCK_FILE}"
@@ -197,9 +209,28 @@ module BundlerPurifier
     JSON.parse(capture!(*cmd)).fetch("hash")
   end
 
+  # The URL a gem file came from. A source with one remote serves it at
+  # <remote>gems/<file>. A source with several remotes (several `source`
+  # lines merged into one section of an old Gemfile.lock) may have served
+  # it from any of them, so each remote is asked for the file, and the one
+  # whose file has the cached file's hash is locked.
+  def gem_url(remotes, file, hash)
+    urls = remotes.map { |r| "#{remote_url(r)}gems/#{file}" }
+    return urls.first if urls.size == 1
+    urls.each do |url|
+      body = begin
+        Gem::RemoteFetcher.fetcher.fetch_path(url)
+      rescue Gem::RemoteFetcher::FetchError
+        next
+      end
+      return url if "sha256-#{Digest::SHA256.base64digest(body)}" == hash
+    end
+    fail!("none of #{urls.join(", ")} serves the #{file} that bundle cache wrote")
+  end
+
   # The locked Bundler, so that a Nix build installs the Bundler of
   # BUNDLED WITH from the gem cache rather than fetching it.
-  def lock_bundler(version, env, work, state)
+  def lock_bundler(version, env, state)
     file = "bundler-#{version}.gem"
     fetched = File.join(state, "bundler-fetch")
     FileUtils.mkdir_p(fetched)
@@ -263,13 +294,17 @@ module BundlerPurifier
     cache
   end
 
-  # Installs with the user's own Bundler when one is on PATH, and with the
-  # Ruby that runs this script otherwise.
+  # The user's PATH, then the Ruby that runs this script, so that install
+  # and push use the user's own Bundler and gem when there are any.
+  def user_ruby_path
+    "#{ENV["PATH"]}:#{RbConfig::CONFIG["bindir"]}"
+  end
+
   def install(args)
     cache = realize
     env = {
       "BUNDLE_CACHE_PATH" => cache.delete_prefix("#{root}/"),
-      "PATH" => "#{ENV["PATH"]}:#{RbConfig::CONFIG["bindir"]}",
+      "PATH" => user_ruby_path,
     }
     run!(env, "bundle", "install", "--local", *args, chdir: root)
   end
@@ -289,7 +324,7 @@ module BundlerPurifier
     out = capture!("nix-build", "--no-out-link", "--expr", expr).strip
     gems = Dir.glob(File.join(out, "*.gem"))
     fail!("the build of #{name} holds no gem file") unless gems.size == 1
-    run!({}, "gem", "push", gems.first, *args, chdir: root)
+    run!({ "PATH" => user_ruby_path }, "gem", "push", gems.first, *args, chdir: root)
   end
 
   def main(argv)

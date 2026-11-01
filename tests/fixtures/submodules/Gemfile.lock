@@ -1,0 +1,42 @@
+GIT
+  remote: https://github.com/sass/sassc-ruby
+  revision: ceed730adef7e6cacd0167c6a3ba4109f67a3ff8
+  tag: v2.4.0
+  submodules: true
+  specs:
+    sassc (2.4.0)
+      ffi (~> 1.9)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    ffi (1.17.4)
+    ffi (1.17.4-aarch64-linux-gnu)
+    ffi (1.17.4-aarch64-linux-musl)
+    ffi (1.17.4-arm-linux-gnu)
+    ffi (1.17.4-arm-linux-musl)
+    ffi (1.17.4-arm64-darwin)
+    ffi (1.17.4-x86-linux-gnu)
+    ffi (1.17.4-x86-linux-musl)
+    ffi (1.17.4-x86_64-darwin)
+    ffi (1.17.4-x86_64-linux-gnu)
+    ffi (1.17.4-x86_64-linux-musl)
+
+PLATFORMS
+  aarch64-linux-gnu
+  aarch64-linux-musl
+  arm-linux-gnu
+  arm-linux-musl
+  arm64-darwin
+  ruby
+  x86-linux-gnu
+  x86-linux-musl
+  x86_64-darwin
+  x86_64-linux-gnu
+  x86_64-linux-musl
+
+DEPENDENCIES
+  sassc!
+
+BUNDLED WITH
+   2.6.9

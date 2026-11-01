@@ -3,7 +3,8 @@
 # The checks: sandboxed builds of the fixtures under fixtures/, from their
 # committed lockfiles, and a run of what each build produced. Each
 # fixture's bundler-purifier.lock.json is written by `bundler-purifier
-# lock` in the fixture's directory.
+# lock` in the fixture's directory. tests/interactive.sh covers what runs
+# outside the sandbox: the lock run, `install` and `push`.
 {
   pkgs,
   overlay,
@@ -12,9 +13,32 @@
 let
   purified = pkgs.extend overlay;
 
+  # Runs `bundle exec ruby main.rb` in the project of a build and checks
+  # its output.
+  runsMain =
+    name: project: expected:
+    purified.runCommand name
+      {
+        nativeBuildInputs = [ project.bundle ];
+      }
+      ''
+        export HOME="$TMPDIR"
+        cd ${project.app}/${project.app.projectDir}
+        output=$(bundle exec ruby main.rb)
+        echo "$output"
+        case "$output" in
+          *${lib.escapeShellArg expected}*) ;;
+          *) echo "${name}: expected ${expected}" >&2; exit 1 ;;
+        esac
+        touch "$out"
+      '';
+
+  inherit (purified) lib;
+
   app = purified.buildBundlerProject {
     src = ./fixtures/app;
     name = "fixture-app";
+    externalPaths."../shared-gem" = ./fixtures/shared-gem;
   };
 
   library = purified.buildBundlerProject {
@@ -22,28 +46,36 @@ let
     name = "fixture-library";
     doCheck = true;
   };
+
+  submodules = purified.buildBundlerProject {
+    src = ./fixtures/submodules;
+    name = "fixture-submodules";
+  };
 in
 {
   inherit cli;
 
   # The app's bundle compiles msgpack, takes nokogiri precompiled for this
-  # platform and rainbow from its git source, all from the gem cache.
-  fixture-app =
-    purified.runCommand "fixture-app-runs"
+  # platform, rainbow from its git source, helper from a path inside the
+  # project and shared from a path outside it, all without a network.
+  fixture-app = runsMain "fixture-app-runs" app "app purified";
+
+  # The gem file of the path gem inside the app.
+  fixture-app-helper-gem =
+    purified.runCommand "fixture-app-helper-gem"
       {
-        nativeBuildInputs = [ app.bundle ];
+        nativeBuildInputs = [ app.app.ruby ];
+        gem = app.packages.helper.gemFile;
       }
       ''
         export HOME="$TMPDIR"
-        cd ${app.app}
-        output=$(bundle exec ruby main.rb)
-        echo "$output"
-        case "$output" in
-          *"app purified"*) ;;
-          *) echo "unexpected output from the fixture app" >&2; exit 1 ;;
-        esac
+        gem specification "$gem" version | grep -q 1.0.0
         touch "$out"
       '';
+
+  # sassc comes from a git source whose libsass is a submodule; its native
+  # extension compiles libsass from the submodule's checkout.
+  fixture-submodules = runsMain "fixture-submodules-runs" submodules ".purified{width:3px}";
 
   # The library's `app` build runs its tests; its package is the gem file
   # its gemspec builds, with the files `git ls-files` lists.

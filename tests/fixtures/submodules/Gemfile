@@ -1,0 +1,5 @@
+source "https://rubygems.org"
+
+# A git source with a submodule: sassc-ruby takes libsass, which its
+# native extension compiles, from the ext/libsass submodule.
+gem "sassc", git: "https://github.com/sass/sassc-ruby", tag: "v2.4.0", submodules: true

@@ -5,6 +5,16 @@ GIT
   specs:
     rainbow (3.1.1)
 
+PATH
+  remote: ../shared-gem
+  specs:
+    shared (1.0.0)
+
+PATH
+  remote: gems/helper
+  specs:
+    helper (1.0.0)
+
 GEM
   remote: https://rubygems.org/
   specs:
@@ -39,10 +49,12 @@ PLATFORMS
   x86_64-linux-musl
 
 DEPENDENCIES
+  helper!
   msgpack
   nokogiri
   rainbow!
   rake
+  shared!
 
 BUNDLED WITH
    2.6.9

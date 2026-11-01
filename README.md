@@ -25,13 +25,17 @@ bundler-purifier is part of [nix-purifiers](https://nix-purifiers.github.io).
 
 ## How the lock is made
 
-`bundler-purifier lock` copies the project to a temporary directory and runs
-Bundler there with empty gem, user and configuration directories. When the
-project has no `Gemfile.lock`, Bundler resolves one first, and the command
-copies it back. Bundler then caches every locked gem for every platform
-(`bundle cache --all-platforms`). The lockfile records each cached gem file
-with the URL it came from, which is the gem's source plus `gems/<file>`.
-Each git source is recorded at its locked revision, with the hash that
+`bundler-purifier lock` runs Bundler in the project with empty gem, user,
+configuration and cache directories, so the project's own `.bundle/config`
+does not apply and every group is locked. When the project has no
+`Gemfile.lock`, Bundler resolves one first. Bundler then caches every
+locked gem for every platform (`bundle cache --all-platforms`) into the
+empty cache. The lockfile records each cached gem file with the URL it came
+from, which is the gem's source plus `gems/<file>`. When an old
+`Gemfile.lock` merges several remotes into one source, the command asks
+each remote for the file and locks the one whose file has the cached
+file's hash. Each git source is recorded at its locked revision, with its
+submodules when the Gemfile asks for them, and with the hash that
 `nix-prefetch-git` reports for the checkout. The command also fetches the
 Bundler version that `BUNDLED WITH` names, so a Nix build runs that Bundler
 and fetches nothing.
@@ -100,13 +104,42 @@ documents the builder's arguments: `ruby` (the default is nixpkgs' Ruby of
 the minor version the lock was made with), `nativeBuildInputs` and
 `buildInputs` for native extensions, `without` for Bundler groups to leave
 out, `doCheck` with `checkCommand` (`bundle exec rake` by default),
-`fetchurl` for credentials or mirrors, and `srcFilter`.
+`fetchurl` for credentials or mirrors, `externalPaths` for path sources
+outside the project, and `srcFilter`.
+
+### Sources
+
+Every kind of source a `Gemfile.lock` can name works:
+
+- **Gem servers** (`source "https://…"`): each gem file, for every platform
+  in `Gemfile.lock`. A server that needs credentials takes them through the
+  builder's `fetchurl` argument.
+- **Git** (`git:`, `github:`), with `submodules: true` too.
+- **Paths inside the project** (`path:`, `gemspec`). Their gemspecs build
+  `packages.<gem>`.
+- **Paths outside the project**, such as `path: "../shared"`. The lock lists
+  them as `externalPaths`, and the build takes each tree as an argument,
+  keyed by the path `Gemfile.lock` gives it:
+
+  ```nix
+  buildBundlerProject {
+    src = ./.;
+    externalPaths."../shared" = inputs.shared;
+  }
+  ```
+
+  The build lays the project and those trees out at the same relative
+  positions, and `app.projectDir` is the project's directory in `app`.
+
+Bundler has no source for a URL to an archive, so there is nothing of that
+kind to lock.
 
 ### Gemspecs that call `git ls-files`
 
 Many gemspecs list their files with `git ls-files`. The source of a flake
-holds only the tracked files, so the builds put the source in a fresh git
-repository, and `git ls-files` lists the same files it lists in a checkout.
+holds only the tracked files, so the builds put the source, each external
+path and each git checkout in a fresh git repository, and `git ls-files`
+lists the same files it lists in a checkout.
 
 ### Development
 
@@ -133,16 +166,43 @@ do for `gem push`.
 
 ## Limits
 
-- A path gem outside the project root cannot be reached from the Nix
-  sandbox. `lock` warns about each one.
-- A gem source with several remotes is locked at its first remote.
-- Native extensions need their libraries passed to the builder. The
-  lockfile does not name them.
+- **Path sources given by absolute path.** Bundler writes such a path into
+  `Gemfile.lock` unchanged. A Nix build can create files only inside its
+  own build directory, so it cannot put a tree at an absolute path, and
+  `lock` fails with that explanation. Paths relative to the Gemfile work.
+- **Bundler plugin sources** (`source "…", type: "…"`). A plugin source
+  fetches through the plugin's own Ruby code, which the lock run cannot
+  see into: there is no URL and no checkout to record, only whatever files
+  the plugin writes. A Nix build would have to run that plugin code with
+  the network, which the sandbox forbids.
+- **Native extensions need their libraries.** `Gemfile.lock` does not name
+  the system libraries an extension links against, so the builder takes
+  them as `nativeBuildInputs` and `buildInputs`.
+- **Gemspecs that call `git ls-files` at run time.** Bundler evaluates the
+  gemspec of every path source each time `bundle exec` starts. In the
+  installed app such a gemspec runs outside a repository, so git prints
+  "not a git repository" to stderr. Bundler needs a gem's file list only
+  to package it, so the app runs normally.
 
 ## Credit
 
-The purifier idea was inspired by nixcloud's
+bundler-purifier follows the design of
+[sbt-nix-backend](https://github.com/nix-purifiers/sbt-purifier): a lock run
+with empty caches that records every download, a builder that runs the
+tool itself in the sandbox from that lockfile, an offline interactive mode
+on the same locked files, and publishing what Nix built. The purifier idea
+was inspired by nixcloud's
 [cargo (libnix)](https://github.com/nixcloud/cargo).
+
+## Tests
+
+`nix flake check` builds the fixtures under `tests/fixtures` in the
+sandbox and runs each. `tests/interactive.sh` tests what runs outside the
+sandbox: it relocks each fixture and compares the result with the
+committed lockfiles, installs the app fixture with `install` and runs it,
+and pushes the library fixture's gem to a stand-in gem host
+(`tests/fake-gem-server.rb`). CI runs both on x86_64-linux and
+aarch64-linux.
 
 ## License
 

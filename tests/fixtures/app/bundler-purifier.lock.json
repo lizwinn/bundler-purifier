@@ -12,7 +12,7 @@
     "x86_64-linux-gnu",
     "x86_64-linux-musl"
   ],
-  "definitionHash": "sha256-ra1GQZ0rq82mGB6nISRa222SvlSZ6VKjq867S41UpDw=",
+  "definitionHash": "sha256-6bGpYNgGEBdGG5deh1dx8efiJYznkV6OpobkEitKke8=",
   "downloads": [
     {
       "path": "bundler-2.6.9.gem",
@@ -84,5 +84,15 @@
       "hash": "sha256-y4JbK9Xx+Okco3vdtLmq80VVG0cx2mKUm+AC+okoNwE="
     }
   ],
-  "gems": []
+  "gems": [
+    {
+      "name": "helper",
+      "version": "1.0.0",
+      "dir": "gems/helper",
+      "gemspec": "gems/helper/helper.gemspec"
+    }
+  ],
+  "externalPaths": [
+    "../shared-gem"
+  ]
 }
