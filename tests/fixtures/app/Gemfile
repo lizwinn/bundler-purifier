@@ -1,0 +1,10 @@
+source "https://rubygems.org"
+
+# A gem without native code.
+gem "rake"
+# A gem whose native extension compiles in the build.
+gem "msgpack"
+# A gem published precompiled for each platform.
+gem "nokogiri"
+# A git source.
+gem "rainbow", git: "https://github.com/ku1ik/rainbow", ref: "v3.1.1"

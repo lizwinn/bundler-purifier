@@ -1,0 +1,315 @@
+#!/usr/bin/env ruby
+# SPDX-License-Identifier: MIT
+#
+# bundler-purifier: locks every gem a Bundler project downloads, by URL and
+# SHA-256, so that Nix can build the project offline in its sandbox.
+#
+#   bundler-purifier lock      lock, when the build definition changed
+#   bundler-purifier relock    lock, whatever changed
+#   bundler-purifier install   bundle install from the locked gems, offline
+#   bundler-purifier push GEM  build GEM with Nix and push it with gem push
+#
+# The commands run in the project root, where Gemfile is. The package that
+# installs this script sets BUNDLER_PURIFIER_LIB (the Nix library) and
+# BUNDLER_PURIFIER_NIXPKGS (the nixpkgs it builds with).
+
+require "bundler"
+require "digest"
+require "fileutils"
+require "json"
+require "open3"
+require "rubygems/package"
+require "tmpdir"
+
+module BundlerPurifier
+  LOCK_FILE = "bundler-purifier.lock.json"
+  LOCK_VERSION = 1
+  STATE_DIR = ".bundle/purifier"
+
+  # Top-level entries of the project that the lock run does not copy:
+  # version control, Bundler's local state, and installs.
+  SKIP_IN_COPY = %w[.git .bundle vendor/bundle vendor/cache tmp log node_modules].freeze
+
+  module_function
+
+  def fail!(message)
+    warn "bundler-purifier: #{message}"
+    exit 1
+  end
+
+  def run!(env, *cmd, chdir:)
+    ok = system(env, *cmd, chdir: chdir)
+    fail!("could not run #{cmd.first}; it is not on PATH") if ok.nil?
+    fail!("#{cmd.join(" ")} failed") unless ok
+  end
+
+  def capture!(*cmd)
+    out, status = Open3.capture2(*cmd)
+    fail!("#{cmd.join(" ")} failed") unless status.success?
+    out
+  end
+
+  def sri(path)
+    "sha256-#{Digest::SHA256.file(path).base64digest}"
+  end
+
+  def root
+    @root ||= begin
+      fail!("no Gemfile in #{Dir.pwd}; run bundler-purifier in the project root") unless File.file?("Gemfile")
+      Dir.pwd
+    end
+  end
+
+  # The files whose content decides what the lock holds: the Gemfile, its
+  # lockfile, and the gemspecs of the project. A lockfile made from the same
+  # definition stays current.
+  def definition_hash
+    files = ["Gemfile", "Gemfile.lock"] + Dir.glob("**/*.gemspec", base: root).reject { |f| f.start_with?("vendor/") }
+    digest = Digest::SHA256.new
+    files.sort.each do |f|
+      path = File.join(root, f)
+      next unless File.file?(path)
+      digest << f << "\0" << File.binread(path) << "\0"
+    end
+    "sha256-#{digest.base64digest}"
+  end
+
+  def copy_project(to)
+    Dir.children(root).each do |entry|
+      next if SKIP_IN_COPY.include?(entry)
+      FileUtils.cp_r(File.join(root, entry), to)
+    end
+    # vendor/ may hold more than the skipped vendor/bundle and vendor/cache.
+    %w[vendor/bundle vendor/cache].each { |p| FileUtils.rm_rf(File.join(to, p)) }
+  end
+
+  # Runs Bundler with empty gem, user and configuration directories, so
+  # that what it fetches is everything the project needs. The lock run uses
+  # the Ruby that runs this script, whose version the lock records.
+  def lock_env(state)
+    {
+      "PATH" => "#{RbConfig::CONFIG["bindir"]}:#{ENV["PATH"]}",
+      "HOME" => File.join(state, "home"),
+      "GEM_HOME" => File.join(state, "gems"),
+      "BUNDLE_USER_HOME" => File.join(state, "bundle-home"),
+      "BUNDLE_APP_CONFIG" => File.join(state, "bundle-config"),
+      "BUNDLE_CACHE_ALL" => "true",
+      "BUNDLE_CACHE_ALL_PLATFORMS" => "true",
+      "BUNDLE_GEMFILE" => nil,
+      "BUNDLE_PATH" => nil,
+      "BUNDLE_WITHOUT" => nil,
+      "BUNDLE_FROZEN" => nil,
+      "BUNDLE_DEPLOYMENT" => nil,
+    }
+  end
+
+  def remote_url(remote)
+    s = remote.to_s
+    s.end_with?("/") ? s : "#{s}/"
+  end
+
+  def lock(force:)
+    if !force && File.file?(File.join(root, LOCK_FILE))
+      current = JSON.parse(File.read(File.join(root, LOCK_FILE)))
+      if current["version"] == LOCK_VERSION && current["definitionHash"] == definition_hash
+        puts "bundler-purifier: #{LOCK_FILE} is up to date"
+        return
+      end
+    end
+
+    Dir.mktmpdir("bundler-purifier-lock") do |tmp|
+      work = File.join(tmp, "project")
+      state = File.join(tmp, "state")
+      FileUtils.mkdir_p([work, state])
+      copy_project(work)
+      env = lock_env(state)
+
+      unless File.file?(File.join(root, "Gemfile.lock"))
+        puts "bundler-purifier: no Gemfile.lock; resolving with bundle lock"
+        run!(env, "bundle", "lock", chdir: work)
+        FileUtils.cp(File.join(work, "Gemfile.lock"), File.join(root, "Gemfile.lock"))
+      end
+
+      run!(env, "bundle", "cache", "--all-platforms", "--no-install", chdir: work)
+      cache = File.join(work, "vendor", "cache")
+      parser = Bundler::LockfileParser.new(File.read(File.join(root, "Gemfile.lock")))
+      check_platforms(parser)
+
+      downloads = {}
+      gems = []
+
+      parser.specs.each do |spec|
+        case (source = spec.source)
+        when Bundler::Source::Rubygems
+          file = "#{spec.full_name}.gem"
+          path = File.join(cache, file)
+          fail!("bundle cache did not write #{file}") unless File.file?(path)
+          remotes = source.remotes
+          warn "bundler-purifier: #{spec.name} comes from a source with several remotes; locking it at #{remotes.first}" if remotes.size > 1
+          downloads[file] = { "path" => file, "url" => "#{remote_url(remotes.first)}gems/#{file}", "hash" => sri(path) }
+        when Bundler::Source::Git
+          dirs = Dir.glob("*-#{source.revision[0, 12]}", base: cache).select { |d| File.directory?(File.join(cache, d)) }
+          fail!("bundle cache did not write the git source #{source.uri} at #{source.revision}") unless dirs.size == 1
+          next if downloads.key?(dirs.first)
+          git = { "url" => source.uri, "rev" => source.revision, "submodules" => source.options["submodules"] ? true : false }
+          downloads[dirs.first] = { "path" => dirs.first, "git" => git, "hash" => git_nar_hash(git) }
+        when Bundler::Source::Path
+          dir = File.expand_path(source.path.to_s, root)
+          unless dir == root || dir.start_with?("#{root}/")
+            warn "bundler-purifier: #{spec.name} comes from #{dir}, outside the project; a Nix build cannot reach it"
+            next
+          end
+          next if gems.any? { |g| g["name"] == spec.name }
+          rel = dir == root ? "." : dir.delete_prefix("#{root}/")
+          gemspec = Dir.glob("#{spec.name}.gemspec", base: dir).first || Dir.glob("*.gemspec", base: dir).first
+          next unless gemspec
+          gems << {
+            "name" => spec.name,
+            "version" => spec.version.to_s,
+            "dir" => rel,
+            "gemspec" => rel == "." ? gemspec : "#{rel}/#{gemspec}",
+          }
+        end
+      end
+
+      bundler = parser.bundler_version&.to_s || Bundler::VERSION
+      downloads["bundler-#{bundler}.gem"] ||= lock_bundler(bundler, env, work, state)
+
+      lockfile = {
+        "version" => LOCK_VERSION,
+        "ruby" => RUBY_VERSION,
+        "bundler" => bundler,
+        "platforms" => parser.platforms.map(&:to_s).sort,
+        "definitionHash" => definition_hash,
+        "downloads" => downloads.values.sort_by { |d| d["path"] },
+        "gems" => gems.sort_by { |g| g["name"] },
+      }
+      File.write(File.join(root, LOCK_FILE), JSON.pretty_generate(lockfile) + "\n")
+      puts "bundler-purifier: wrote #{LOCK_FILE}"
+    end
+  end
+
+  # The hash of a git checkout as nixpkgs' fetchgit makes it, which is what
+  # a Nix build fetches and checks the locked hash against.
+  def git_nar_hash(git)
+    cmd = ["nix-prefetch-git", "--quiet", "--url", git["url"], "--rev", git["rev"]]
+    cmd << "--fetch-submodules" if git["submodules"]
+    JSON.parse(capture!(*cmd)).fetch("hash")
+  end
+
+  # The locked Bundler, so that a Nix build installs the Bundler of
+  # BUNDLED WITH from the gem cache rather than fetching it.
+  def lock_bundler(version, env, work, state)
+    file = "bundler-#{version}.gem"
+    fetched = File.join(state, "bundler-fetch")
+    FileUtils.mkdir_p(fetched)
+    run!(env, "gem", "fetch", "bundler", "--version", version, "--source", "https://rubygems.org/", chdir: fetched)
+    path = File.join(fetched, file)
+    fail!("gem fetch did not write #{file}") unless File.file?(path)
+    { "path" => file, "url" => "https://rubygems.org/gems/#{file}", "hash" => sri(path) }
+  end
+
+  def check_platforms(parser)
+    platforms = parser.platforms.map(&:to_s)
+    return if platforms.include?("ruby")
+    missing = %w[x86_64-linux aarch64-linux].reject { |p| platforms.any? { |q| q == p || q.start_with?("#{p}-") } }
+    return if missing.empty?
+    warn "bundler-purifier: Gemfile.lock lists no platform for #{missing.join(", ")}; a Nix build there fails. " \
+         "Run: bundle lock --add-platform #{missing.join(" ")}"
+  end
+
+  def read_lock!
+    path = File.join(root, LOCK_FILE)
+    fail!("no #{LOCK_FILE}; run bundler-purifier lock") unless File.file?(path)
+    lock = JSON.parse(File.read(path))
+    fail!("#{LOCK_FILE} has lock format version #{lock["version"]}; this bundler-purifier writes version #{LOCK_VERSION}. Run bundler-purifier relock") unless lock["version"] == LOCK_VERSION
+    fail!("the Gemfile, Gemfile.lock or a gemspec changed since #{LOCK_FILE} was made; run bundler-purifier lock") unless lock["definitionHash"] == definition_hash
+    lock
+  end
+
+  def lib_dir
+    ENV["BUNDLER_PURIFIER_LIB"] || fail!("BUNDLER_PURIFIER_LIB is not set; run bundler-purifier through its Nix package")
+  end
+
+  # Realizes the lock into a writable gem cache under .bundle/purifier.
+  # The out-link of the build is the GC root that keeps every locked file
+  # alive. Bundler leaves marker files in its cache, so the cache is a
+  # writable copy whose gem files stay links into the store.
+  def realize
+    read_lock!
+    state = File.join(root, STATE_DIR)
+    FileUtils.mkdir_p(state)
+    nixpkgs = ENV["BUNDLER_PURIFIER_NIXPKGS"] || fail!("BUNDLER_PURIFIER_NIXPKGS is not set; run bundler-purifier through its Nix package")
+    built = capture!(
+      "nix-build", File.join(lib_dir, "realize.nix"),
+      "--arg", "lockFile", File.join(root, LOCK_FILE),
+      "--arg", "nixpkgs", nixpkgs,
+      "--out-link", File.join(state, "gem-cache")
+    ).strip
+
+    cache = File.join(state, "cache")
+    FileUtils.rm_rf(cache)
+    FileUtils.mkdir_p(cache)
+    Dir.children(built).each do |entry|
+      source = File.join(built, entry)
+      dest = File.join(cache, entry)
+      if File.symlink?(source)
+        File.symlink(File.readlink(source), dest)
+      else
+        FileUtils.cp_r(source, dest)
+        FileUtils.chmod_R("u+w", dest)
+      end
+    end
+    cache
+  end
+
+  # Installs with the user's own Bundler when one is on PATH, and with the
+  # Ruby that runs this script otherwise.
+  def install(args)
+    cache = realize
+    env = {
+      "BUNDLE_CACHE_PATH" => cache.delete_prefix("#{root}/"),
+      "PATH" => "#{ENV["PATH"]}:#{RbConfig::CONFIG["bindir"]}",
+    }
+    run!(env, "bundle", "install", "--local", *args, chdir: root)
+  end
+
+  def push(args)
+    name = args.shift || fail!("usage: bundler-purifier push GEM [gem push options]")
+    lock = read_lock!
+    fail!("#{LOCK_FILE} names no gem #{name}; it names #{lock["gems"].map { |g| g["name"] }.join(", ")}") unless lock["gems"].any? { |g| g["name"] == name }
+    nixpkgs = ENV["BUNDLER_PURIFIER_NIXPKGS"] || fail!("BUNDLER_PURIFIER_NIXPKGS is not set; run bundler-purifier through its Nix package")
+    expr = <<~NIX
+      let
+        pkgs = import #{nixpkgs} { };
+        build = pkgs.callPackage #{File.join(lib_dir, "build-bundler-project.nix")} { };
+      in
+      (build { src = #{root}; }).packages.#{JSON.generate(name)}
+    NIX
+    out = capture!("nix-build", "--no-out-link", "--expr", expr).strip
+    gems = Dir.glob(File.join(out, "*.gem"))
+    fail!("the build of #{name} holds no gem file") unless gems.size == 1
+    run!({}, "gem", "push", gems.first, *args, chdir: root)
+  end
+
+  def main(argv)
+    command = argv.shift
+    case command
+    when "lock" then lock(force: false)
+    when "relock" then lock(force: true)
+    when "install" then install(argv)
+    when "push" then push(argv)
+    else
+      warn <<~USAGE
+        usage: bundler-purifier COMMAND
+          lock      lock, when the Gemfile, Gemfile.lock or a gemspec changed
+          relock    lock, whatever changed
+          install   bundle install from the locked gems, offline
+          push GEM  build GEM with Nix and push it with gem push
+      USAGE
+      exit(command.nil? ? 1 : 2)
+    end
+  end
+end
+
+BundlerPurifier.main(ARGV.dup)

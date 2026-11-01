@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "ruby": "3.4.11",
+  "bundler": "2.6.9",
+  "platforms": [
+    "ruby",
+    "x86_64-linux"
+  ],
+  "definitionHash": "sha256-bz4mvJT0yPP4WnGGl7IPb0ScELXPIxDIlMJmdOVr7sA=",
+  "downloads": [
+    {
+      "path": "bundler-2.6.9.gem",
+      "url": "https://rubygems.org/gems/bundler-2.6.9.gem",
+      "hash": "sha256-olZ1/70FWuEYZ2bMHhILTPYliOiKu1m5nFfiKxxVyes="
+    },
+    {
+      "path": "rainbow-3.1.1.gem",
+      "url": "https://rubygems.org/gems/rainbow-3.1.1.gem",
+      "hash": "sha256-A5SRqjqJ9C76HW3sL8TmLt6W62rNleUvGtWBGCt5vGo="
+    },
+    {
+      "path": "rake-13.4.2.gem",
+      "url": "https://rubygems.org/gems/rake-13.4.2.gem",
+      "hash": "sha256-y4JbK9Xx+Okco3vdtLmq80VVG0cx2mKUm+AC+okoNwE="
+    }
+  ],
+  "gems": [
+    {
+      "name": "greeting",
+      "version": "0.2.0",
+      "dir": ".",
+      "gemspec": "greeting.gemspec"
+    }
+  ]
+}
