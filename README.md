@@ -122,6 +122,21 @@ native extension (`BUNDLE_BUILD__<gem>`) apply in the sandbox.
 gem file with `gem push`. Options after `publish` go to `gem push`, and
 credentials work as they do for `gem push`.
 
+A gem added to the Gemfile while offline stops in Bundler's own
+resolution, with Bundler's message rather than one naming
+`bundler-purifier lock`. Bundler resolves before any hook it offers runs,
+so bundler-purifier has no point at which to add its message. Run
+`bundler-purifier lock` while online after adding a gem.
+
+bundler-purifier is a standalone command, not a Bundler plugin. A Bundler
+plugin is declared in the Gemfile, which adds it to the gems the project
+locks, or installed per user from a gem server. bundler-purifier runs from
+its flake instead, and each of its commands wraps Bundler's own commands.
+`lock` runs `bundle cache --all-platforms --no-install` with empty caches
+to download every locked gem, and runs `bundle lock` first when there is
+no `Gemfile.lock`. `update` runs `bundle update`, and `prefetch` runs
+`bundle install --local`.
+
 ## Working offline
 
 ```zsh
@@ -169,10 +184,6 @@ with a message that names the fix:
   format**: run `bundler-purifier lock --force`.
 - **A path source outside the project has no tree**: pass it as
   `externalPaths`.
-
-A gem added to the Gemfile while offline fails in Bundler's own
-resolution, with Bundler's message, since Bundler resolves before any hook
-it offers runs. Lock while online.
 
 ## Supported language repositories
 
