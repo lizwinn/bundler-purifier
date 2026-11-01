@@ -26,6 +26,7 @@ class BundlerPurifierTest < Minitest::Test
     Dir.chdir(@dir)
     Bundler.reset!
     BP.instance_variable_set(:@root, @dir)
+    BP.instance_variable_set(:@gemfile_lock_path, nil)
     BP.instance_variable_set(:@bundler_settings, nil)
   end
 
