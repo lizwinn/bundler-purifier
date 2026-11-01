@@ -55,6 +55,18 @@ in
 {
   inherit cli;
 
+  # The unit tests of the lock run's logic (tests/unit).
+  unit =
+    purified.runCommand "bundler-purifier-unit-tests"
+      {
+        nativeBuildInputs = [ purified.ruby ];
+      }
+      ''
+        export HOME="$TMPDIR" LC_ALL=C.UTF-8
+        ruby ${./unit/bundler_purifier_test.rb} ${../bin/bundler-purifier}
+        touch "$out"
+      '';
+
   # The app's bundle compiles msgpack, takes nokogiri precompiled for this
   # platform, rainbow from its git source, helper from a path inside the
   # project and shared from a path outside it, all without a network.

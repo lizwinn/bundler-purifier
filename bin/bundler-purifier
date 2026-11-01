@@ -19,11 +19,14 @@ require "fileutils"
 require "json"
 require "open3"
 require "rubygems/package"
+require "rubygems/remote_fetcher"
+require "uri"
 require "tmpdir"
+require "yaml"
 
 module BundlerPurifier
   LOCK_FILE = "bundler-purifier.lock.json"
-  LOCK_VERSION = 1
+  LOCK_VERSION = 2
   STATE_DIR = ".bundle/purifier"
 
   module_function
@@ -68,9 +71,12 @@ module BundlerPurifier
   end
 
   # The files whose content decides what the lock holds: the Gemfile, its
-  # lockfile, and the gemspecs of the project and of its path sources
-  # outside the project. A lockfile made from the same definition stays
-  # current.
+  # lockfile, and the gemspecs of the project (outside hidden directories
+  # and vendor/) and of its path sources outside the project. A lockfile
+  # made from the same definition stays current. buildBundlerProject
+  # computes the same hash when it evaluates, to tell a stale lock: each
+  # file contributes its name, its length in bytes and its content, each
+  # followed by a newline, in the byte order of the names.
   def definition_hash
     files = ["Gemfile", "Gemfile.lock"] + Dir.glob("**/*.gemspec", base: root).reject { |f| f.start_with?("vendor/") }
     lockfile = File.join(root, "Gemfile.lock")
@@ -80,24 +86,85 @@ module BundlerPurifier
       end
     end
     digest = Digest::SHA256.new
-    files.sort.each do |f|
+    files.uniq.sort.each do |f|
       path = File.expand_path(f, root)
       next unless File.file?(path)
-      digest << f << "\0" << File.binread(path) << "\0"
+      content = File.binread(path)
+      digest << "#{f}\n#{content.bytesize}\n" << content << "\n"
     end
     "sha256-#{digest.base64digest}"
   end
 
-  # Runs Bundler in the project with empty gem, user, configuration and
-  # cache directories, so that what it fetches is everything the project
-  # needs. The project's own .bundle/config and the user's .gemrc do not
-  # apply, so every group is locked from the sources the Gemfile names.
-  # HOME stays, so that git reaches private git sources with the user's
-  # SSH keys and credential helpers. The lock run uses the Ruby that runs
-  # this script, whose version the lock records.
+  # The hash of a lockfile's content: SHA-256 of its JSON without
+  # contentHash, with the keys of every object sorted and no whitespace,
+  # which is how Nix's builtins.toJSON writes it. Nix checks it when it
+  # reads the lock, to tell a lockfile that was edited by hand.
+  def content_hash(lock)
+    canonical = ->(value) do
+      case value
+      when Hash then value.keys.sort.to_h { |k| [k, canonical.(value[k])] }
+      when Array then value.map(&canonical)
+      else value
+      end
+    end
+    "sha256-#{Digest::SHA256.base64digest(JSON.generate(canonical.(lock.except("contentHash"))))}"
+  end
+
+  # The Ruby version the project asks for: its .ruby-version, or the RUBY
+  # VERSION section of Gemfile.lock.
+  def project_ruby_version(lockfile_text = nil)
+    dot = File.join(root, ".ruby-version")
+    if File.file?(dot)
+      version = File.read(dot).strip.delete_prefix("ruby-")
+      return version unless version.empty?
+    end
+    lockfile_text ||= File.file?(File.join(root, "Gemfile.lock")) ? File.read(File.join(root, "Gemfile.lock")) : ""
+    lockfile_text[/^RUBY VERSION\n\s+ruby (\d+\.\d+(?:\.\d+)?)/, 1]
+  end
+
+  # The bin directory of the Ruby the lock run uses: the Ruby that runs
+  # this script, or nixpkgs' Ruby of the minor version the project asks
+  # for when that differs.
+  def lock_ruby_bindir
+    @lock_ruby_bindir ||= begin
+      wanted = project_ruby_version
+      if wanted.nil? || wanted.split(".")[0, 2] == RUBY_VERSION.split(".")[0, 2]
+        RbConfig::CONFIG["bindir"]
+      else
+        major, minor = wanted.split(".")
+        nixpkgs = ENV["BUNDLER_PURIFIER_NIXPKGS"] || fail!("BUNDLER_PURIFIER_NIXPKGS is not set; run bundler-purifier through its Nix package")
+        out, status = Open3.capture2("nix-build", nixpkgs, "-A", "ruby_#{major}_#{minor}", "--no-out-link")
+        fail!("the project asks for Ruby #{wanted}, and nixpkgs has no ruby_#{major}_#{minor}") unless status.success?
+        File.join(out.strip, "bin")
+      end
+    end
+  end
+
+  # The settings of the project's .bundle/config that apply to the lock
+  # run: all of them except the ones that narrow what is locked (groups)
+  # or where it goes.
+  LOCK_RUN_IGNORED_SETTINGS = %w[
+    BUNDLE_WITHOUT BUNDLE_WITH BUNDLE_ONLY BUNDLE_PATH BUNDLE_FROZEN BUNDLE_DEPLOYMENT
+    BUNDLE_CACHE_PATH BUNDLE_BIN BUNDLE_APP_CONFIG
+  ].freeze
+
+  def write_lock_run_config(dir)
+    config = {}
+    project = File.join(root, ".bundle", "config")
+    config = (YAML.safe_load(File.read(project)) || {}).reject { |k, _| LOCK_RUN_IGNORED_SETTINGS.include?(k) } if File.file?(project)
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, "config"), YAML.dump(config))
+  end
+
+  # Runs Bundler in the project with empty gem, user and cache directories,
+  # so that what it fetches is everything the project needs. Its
+  # configuration is the project's .bundle/config without the settings in
+  # LOCK_RUN_IGNORED_SETTINGS, so every group is locked; the user's .gemrc
+  # does not apply. HOME stays, so that git reaches private git sources
+  # with the user's SSH keys and credential helpers.
   def lock_env(state)
     {
-      "PATH" => "#{RbConfig::CONFIG["bindir"]}:#{ENV["PATH"]}",
+      "PATH" => "#{lock_ruby_bindir}:#{ENV["PATH"]}",
       "GEMRC" => File.join(state, "gemrc"),
       "XDG_CACHE_HOME" => File.join(state, "xdg-cache"),
       "XDG_CONFIG_HOME" => File.join(state, "xdg-config"),
@@ -133,6 +200,7 @@ module BundlerPurifier
 
     Dir.mktmpdir("bundler-purifier-lock") do |state|
       env = lock_env(state)
+      write_lock_run_config(env["BUNDLE_APP_CONFIG"])
 
       unless File.file?(File.join(root, "Gemfile.lock"))
         puts "bundler-purifier: no Gemfile.lock; resolving with bundle lock"
@@ -201,7 +269,7 @@ module BundlerPurifier
 
       lockfile = {
         "version" => LOCK_VERSION,
-        "ruby" => RUBY_VERSION,
+        "ruby" => capture!(File.join(lock_ruby_bindir, "ruby"), "-e", "print RUBY_VERSION"),
         "bundler" => bundler,
         "platforms" => parser.platforms.map(&:to_s).sort,
         "definitionHash" => definition_hash,
@@ -209,6 +277,7 @@ module BundlerPurifier
         "gems" => gems.sort_by { |g| g["name"] },
         "externalPaths" => external_paths(parser),
       }
+      lockfile["contentHash"] = content_hash(lockfile)
       File.write(File.join(root, LOCK_FILE), JSON.pretty_generate(lockfile) + "\n")
       puts "bundler-purifier: wrote #{LOCK_FILE}"
     end
@@ -290,8 +359,13 @@ module BundlerPurifier
   def read_lock!
     path = File.join(root, LOCK_FILE)
     fail!("no #{LOCK_FILE}; run bundler-purifier lock") unless File.file?(path)
-    lock = JSON.parse(File.read(path))
+    lock = begin
+      JSON.parse(File.read(path))
+    rescue JSON::ParserError => e
+      fail!("#{LOCK_FILE} is not valid JSON (#{e.message.lines.first.strip}); run bundler-purifier relock")
+    end
     fail!("#{LOCK_FILE} has lock format version #{lock["version"]}; this bundler-purifier writes version #{LOCK_VERSION}. Run bundler-purifier relock") unless lock["version"] == LOCK_VERSION
+    fail!("#{LOCK_FILE} was changed by hand: its content does not match its contentHash. Run bundler-purifier relock") unless lock["contentHash"] == content_hash(lock)
     fail!("the Gemfile, Gemfile.lock or a gemspec changed since #{LOCK_FILE} was made; run bundler-purifier lock") unless lock["definitionHash"] == definition_hash
     lock
   end
@@ -385,4 +459,5 @@ module BundlerPurifier
   end
 end
 
-BundlerPurifier.main(ARGV.dup)
+# The unit tests load this file without running a command.
+BundlerPurifier.main(ARGV.dup) if $PROGRAM_NAME == __FILE__

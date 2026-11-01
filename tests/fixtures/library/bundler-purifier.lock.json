@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "ruby": "3.4.11",
   "bundler": "2.6.9",
   "platforms": [
@@ -7,7 +7,7 @@
     "ruby",
     "x86_64-linux"
   ],
-  "definitionHash": "sha256-83bbbCdc90D2uTD7VD73DsjB4ExHsSPsJe+Y0LNGg1w=",
+  "definitionHash": "sha256-SD7aGaojXXgzf6eF9yREfMpOpZG82A7GGc2h+TpBqRs=",
   "downloads": [
     {
       "path": "bundler-2.6.9.gem",
@@ -39,5 +39,6 @@
       ]
     }
   ],
-  "externalPaths": []
+  "externalPaths": [],
+  "contentHash": "sha256-SRo5z7S4IYyxa/rjFymK3UuzmIyIXhJMCbpDcRYwnGc="
 }

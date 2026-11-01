@@ -108,9 +108,11 @@ let
     cd "$tree/${projectDir}"
   '';
 
-  # Version control, Bundler's local configuration and installs, and the
-  # results of nix build never take part in a build. vendor/cache is the
-  # gem cache this builder supplies itself.
+  # Version control, Bundler's local state and installs, and the results of
+  # nix build never take part in a build. The project's .bundle/config
+  # does, since it holds settings such as compile flags for native
+  # extensions (BUNDLE_BUILD__<gem>). vendor/cache is the gem cache this
+  # builder supplies itself.
   defaultSrcFilter =
     path: type:
     let
@@ -119,11 +121,80 @@ let
     in
     !(
       base == ".git"
-      || base == ".bundle"
+      || (lib.hasPrefix ".bundle/" rel && rel != ".bundle/config")
       || rel == "vendor/bundle"
       || rel == "vendor/cache"
       || lib.hasPrefix "result" base
     );
+
+  # A file of the project, read without copying the whole project into the
+  # store first.
+  srcFile = rel: if builtins.isPath src then src + "/${rel}" else "${src}/${rel}";
+
+  # The definition hash of the project as it is now, computed as
+  # `bundler-purifier lock` computes it (see definition_hash there): the
+  # Gemfile, Gemfile.lock, every gemspec outside hidden directories and
+  # vendor/, and the gemspecs at the top of each external path source.
+  gemspecsIn =
+    dir: rel:
+    lib.concatLists (
+      lib.mapAttrsToList (
+        name: type:
+        let
+          path = if rel == "" then name else "${rel}/${name}";
+        in
+        if lib.hasPrefix "." name then
+          [ ]
+        else if type == "directory" then
+          (if path == "vendor" then [ ] else gemspecsIn "${dir}/${name}" path)
+        else if lib.hasSuffix ".gemspec" name then
+          [ path ]
+        else
+          [ ]
+      ) (builtins.readDir dir)
+    );
+  definitionFiles =
+    map
+      (rel: {
+        inherit rel;
+        file = srcFile rel;
+      })
+      (
+        [ "Gemfile" ]
+        ++ lib.optional (builtins.pathExists (srcFile "Gemfile.lock")) "Gemfile.lock"
+        ++ gemspecsIn (srcFile "") ""
+      )
+    ++ lib.concatMap (
+      p:
+      map
+        (name: {
+          rel = "${p}/${name}";
+          file = "${externalPaths.${p}}/${name}";
+        })
+        (
+          lib.attrNames (
+            lib.filterAttrs (name: type: type != "directory" && lib.hasSuffix ".gemspec" name) (
+              builtins.readDir externalPaths.${p}
+            )
+          )
+        )
+    ) (lib.filter (p: externalPaths ? ${p}) lock.externalPaths);
+  definitionHash = builtins.convertHash {
+    hash = builtins.hashString "sha256" (
+      lib.concatMapStrings (
+        f:
+        let
+          content = builtins.readFile f.file;
+        in
+        "${f.rel}\n${toString (builtins.stringLength content)}\n${content}\n"
+      ) (lib.sort (a: b: a.rel < b.rel) (lib.unique definitionFiles))
+    );
+    hashAlgo = "sha256";
+    toHashFormat = "sri";
+  };
+  definitionCurrent =
+    definitionHash == lock.definitionHash
+    || throw "bundler-purifier: the Gemfile, Gemfile.lock or a gemspec changed since ${baseNameOf (toString lockFile)} was made. Run `bundler-purifier lock` in the project root.";
 
   filteredSrc = builtins.path {
     path = src;
@@ -201,6 +272,7 @@ let
     assert
       missingExternal == [ ]
       || throw "bundler-purifier: Gemfile.lock has path sources outside the project (${lib.concatStringsSep ", " missingExternal}); pass their trees as `externalPaths`.";
+    assert definitionCurrent;
     stdenv.mkDerivation {
       inherit name;
       src = filteredSrc;
@@ -284,35 +356,37 @@ let
     gem:
     let
       fileName = "${gem.name}-${gem.version}.gem";
-      package = stdenv.mkDerivation {
-        pname = gem.name;
-        inherit (gem) version;
-        src = filteredSrc;
-        nativeBuildInputs = [
-          ruby'
-          gitMinimal
-        ];
-        dontConfigure = true;
-        dontFixup = true;
-        buildPhase = ''
-          runHook preBuild
-          export HOME="$TMPDIR/home"
-          mkdir -p "$HOME"
-          ${gitRepositoryForGemspecs}
-          cd ${lib.escapeShellArg gem.dir}
-          gem build ${lib.escapeShellArg (baseNameOf gem.gemspec)} --output ${lib.escapeShellArg fileName}
-          runHook postBuild
-        '';
-        installPhase = ''
-          runHook preInstall
-          mkdir -p "$out"
-          cp ${lib.escapeShellArg fileName} "$out/"
-          runHook postInstall
-        '';
-        passthru = {
-          gemFile = "${package}/${fileName}";
+      package =
+        assert definitionCurrent;
+        stdenv.mkDerivation {
+          pname = gem.name;
+          inherit (gem) version;
+          src = filteredSrc;
+          nativeBuildInputs = [
+            ruby'
+            gitMinimal
+          ];
+          dontConfigure = true;
+          dontFixup = true;
+          buildPhase = ''
+            runHook preBuild
+            export HOME="$TMPDIR/home"
+            mkdir -p "$HOME"
+            ${gitRepositoryForGemspecs}
+            cd ${lib.escapeShellArg gem.dir}
+            gem build ${lib.escapeShellArg (baseNameOf gem.gemspec)} --output ${lib.escapeShellArg fileName}
+            runHook postBuild
+          '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p "$out"
+            cp ${lib.escapeShellArg fileName} "$out/"
+            runHook postInstall
+          '';
+          passthru = {
+            gemFile = "${package}/${fileName}";
+          };
         };
-      };
     in
     package;
 in
