@@ -43,8 +43,11 @@
   # The Ruby that runs Bundler. The default is nixpkgs' Ruby of the minor
   # version the lock was made with.
   ruby ? null,
-  # Replaces the built-in fetcher; see fetch.nix.
+  # Replaces the built-in fetcher for gem files; see fetch.nix.
   fetchurl ? null,
+  # Replaces nixpkgs' fetchgit for git sources, as for a private repository
+  # that needs credentials. It is called with the arguments of fetchgit.
+  fetchgit ? null,
   # Build tools and libraries for gems with native extensions, which
   # compile in the `app` build: pkg-config and libpq for pg, for example.
   nativeBuildInputs ? [ ],
@@ -130,7 +133,9 @@ let
       pkgs.${rubyAttr}
         or (throw "bundler-purifier: nixpkgs has no ${rubyAttr} for the Ruby ${lock.ruby} the lock was made with; pass `ruby`.");
 
-  gemCache = callPackage ./gem-cache.nix { inherit lockFile fetchurl; };
+  gemCache = callPackage ./gem-cache.nix (
+    { inherit lockFile fetchurl; } // lib.optionalAttrs (fetchgit != null) { inherit fetchgit; }
+  );
 
   # The environment shared by every build. Bundler's own configuration
   # goes to .bundle/config in the build directory, which `app` keeps.

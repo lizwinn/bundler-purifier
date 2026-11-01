@@ -114,7 +114,13 @@ Every kind of source a `Gemfile.lock` can name works:
 - **Gem servers** (`source "https://…"`): each gem file, for every platform
   in `Gemfile.lock`. A server that needs credentials takes them through the
   builder's `fetchurl` argument.
-- **Git** (`git:`, `github:`), with `submodules: true` too.
+- **Git** (`git:`, `github:`), with `submodules: true` too. The Nix sandbox
+  has no SSH keys, so a source over SSH (`git@host:owner/repo` or
+  `ssh://host/owner/repo`) is locked at the HTTPS URL of the same host
+  and path. A private repository takes a credentialed fetcher through the
+  builder's `fetchgit` argument, which is called with the arguments of
+  nixpkgs' `fetchgit`. The lock run itself uses your SSH keys and git
+  credential helpers.
 - **Paths inside the project** (`path:`, `gemspec`). Their gemspecs build
   `packages.<gem>`.
 - **Paths outside the project**, such as `path: "../shared"`. The lock lists

@@ -90,13 +90,15 @@ module BundlerPurifier
 
   # Runs Bundler in the project with empty gem, user, configuration and
   # cache directories, so that what it fetches is everything the project
-  # needs. The project's own .bundle/config does not apply, so every group
-  # is locked. The lock run uses the Ruby that runs this script, whose
-  # version the lock records.
+  # needs. The project's own .bundle/config and the user's .gemrc do not
+  # apply, so every group is locked from the sources the Gemfile names.
+  # HOME stays, so that git reaches private git sources with the user's
+  # SSH keys and credential helpers. The lock run uses the Ruby that runs
+  # this script, whose version the lock records.
   def lock_env(state)
     {
       "PATH" => "#{RbConfig::CONFIG["bindir"]}:#{ENV["PATH"]}",
-      "HOME" => File.join(state, "home"),
+      "GEMRC" => File.join(state, "gemrc"),
       "XDG_CACHE_HOME" => File.join(state, "xdg-cache"),
       "XDG_CONFIG_HOME" => File.join(state, "xdg-config"),
       "XDG_DATA_HOME" => File.join(state, "xdg-data"),
@@ -163,7 +165,7 @@ module BundlerPurifier
           dirs = Dir.glob("*-#{source.revision[0, 12]}", base: cache).select { |d| File.directory?(File.join(cache, d)) }
           fail!("bundle cache did not write the git source #{source.uri} at #{source.revision}") unless dirs.size == 1
           next if downloads.key?(dirs.first)
-          git = { "url" => source.uri, "rev" => source.revision, "submodules" => source.options["submodules"] ? true : false }
+          git = { "url" => https_git_url(source.uri), "rev" => source.revision, "submodules" => source.options["submodules"] ? true : false }
           downloads[dirs.first] = { "path" => dirs.first, "git" => git, "hash" => git_nar_hash(git) }
         when Bundler::Source::Path
           dir = File.expand_path(source.path.to_s, root)
@@ -198,6 +200,18 @@ module BundlerPurifier
       }
       File.write(File.join(root, LOCK_FILE), JSON.pretty_generate(lockfile) + "\n")
       puts "bundler-purifier: wrote #{LOCK_FILE}"
+    end
+  end
+
+  # The URL a Nix build fetches a git source from. The Nix sandbox has no
+  # SSH keys, so a source over SSH (git@host:path or ssh://host/path) is
+  # locked at the HTTPS URL of the same host and path; a private repository
+  # takes a credentialed fetchgit in the builder.
+  def https_git_url(uri)
+    case uri
+    when %r{\Assh://(?:[^@/]+@)?([^/:]+)(?::\d+)?/(.+)\z} then "https://#{$1}/#{$2}"
+    when %r{\A(?:[^@/]+@)?([^/:]+):(?!//)(.+)\z} then "https://#{$1}/#{$2.delete_prefix("/")}"
+    else uri
     end
   end
 
