@@ -17,8 +17,7 @@
 let
   pkgs = import nixpkgs { };
   readLock = import ./read-lock.nix { inherit (pkgs) lib; };
-  buildBundlerProject = import ./build-bundler-project.nix {
-    inherit (pkgs) lib;
+  buildBundlerProject = pkgs.callPackage ./build-bundler-project.nix {
     inherit readLock;
     inherit ((builtins.getFlake purifierFlake).lib) purifier;
   };
@@ -39,6 +38,6 @@ let
   );
 in
 buildBundlerProject {
-  inherit pkgs src externalPaths;
+  inherit src externalPaths;
   lockFile = lockFile';
 }

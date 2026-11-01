@@ -28,7 +28,17 @@ platform in `Gemfile.lock`; `lock` warns when there is none, and
 Bundler 4), `Gemfile.lock` records every gem's hash, and the purifier
 lockfile shrinks to a few fields.
 
-The flake publishes the builder in its library:
+The flake's `overlays.default` adds `buildBundlerProject` to a package
+set, and a package written for `callPackage` takes it by name, like any
+other builder:
+
+```nix
+# package.nix
+{ buildBundlerProject }:
+(buildBundlerProject { src = ./.; }).packages.app
+```
+
+A flake that builds the project applies the overlay to its nixpkgs:
 
 ```nix
 {
@@ -38,12 +48,11 @@ The flake publishes the builder in its library:
   outputs = { nixpkgs, bundler-purifier, ... }:
     let
       system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
-      project = bundler-purifier.lib.bundler-purifier.buildBundlerProject {
-        inherit pkgs;
-        src = ./.;
-        name = "my-app";
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [ bundler-purifier.overlays.default ];
       };
+      project = pkgs.buildBundlerProject { src = ./.; };
     in
     {
       packages.${system} = project.packages;
@@ -70,8 +79,11 @@ It also has `executables.<name>`, each executable the gemspecs declare, and
 `lib.bundler-purifier.readLock` reads the lock into the contract's shape
 for tools such as SBOM generators.
 
-`nix/lib/build-bundler-project.nix` documents the builder's arguments.
-`ruby` replaces nixpkgs' Ruby of the minor version the lock was made
+The builder takes what it needs from the package set (`stdenv`,
+`mkShell`, nixpkgs' Rubies and gem configuration, and the shared
+library's fetchers), so `buildBundlerProject.override` replaces any of
+it. `nix/lib/build-bundler-project.nix` documents the builder's own
+arguments. `ruby` replaces nixpkgs' Ruby of the minor version the lock was made
 with. `nativeBuildInputs` and `buildInputs` give native extensions what
 they compile and link against, beyond the libraries nixpkgs' gem
 configuration names for the locked gems (`useGemConfig`). The libraries
@@ -86,7 +98,7 @@ lockfile outside it and passes it as `lockFile`; `Gemfile.lock` stays in
 the tree. The commands then take `--lockfile <path>` or
 `BUNDLER_PURIFIER_LOCKFILE`.
 
-## Everyday loop
+## Development loop
 
 Day-to-day work goes through Bundler's own commands: `bundle exec`,
 `bundle exec rake`, `bundle exec rails server`. After changing the
@@ -110,7 +122,7 @@ native extension (`BUNDLE_BUILD__<gem>`) apply in the sandbox.
 gem file with `gem push`. Options after `publish` go to `gem push`, and
 credentials work as they do for `gem push`.
 
-## Offline work
+## Working offline
 
 ```zsh
 nix run github:nix-purifiers/bundler-purifier -- prefetch
@@ -142,7 +154,7 @@ the editor from `nix develop .bundler-purifier/shell`, or point its Ruby
 LSP extension at that shell. Ruby LSP uses the project's bundle when the
 Gemfile has it, and needs no download of its own.
 
-## Errors and fixes
+## Troubleshooting
 
 Each of these fails, in the commands and when Nix evaluates the build,
 with a message that names the fix:
@@ -162,9 +174,10 @@ A gem added to the Gemfile while offline fails in Bundler's own
 resolution, with Bundler's message, since Bundler resolves before any hook
 it offers runs. Lock while online.
 
-## Sources supported and refused
+## Supported language repositories
 
-Every kind of source a `Gemfile.lock` can name works:
+bundler-purifier fetches gems from each kind of source a `Gemfile.lock`
+names:
 
 - **Gem servers** (`source "https://…"`): each gem file, for every platform
   in `Gemfile.lock`, with the platform gems a system cannot install left
@@ -186,7 +199,7 @@ Every kind of source a `Gemfile.lock` can name works:
   same relative positions, and `packages.app.projectDir` is the project's
   directory in the app.
 
-Bundler has no source for a URL to an archive. Two kinds cannot work:
+Two kinds of source cannot build in the Nix sandbox:
 
 - **Path sources given by absolute path.** Bundler writes such a path into
   `Gemfile.lock` unchanged. A Nix build can create files only inside its
@@ -231,9 +244,11 @@ the flake passes it in `buildInputs`:
   outputs = { nixpkgs, bundler-purifier, ... }:
     let
       system = "x86_64-linux";
-      pkgs = nixpkgs.legacyPackages.${system};
-      lobsters = bundler-purifier.lib.bundler-purifier.buildBundlerProject {
-        inherit pkgs;
+      pkgs = import nixpkgs {
+        inherit system;
+        overlays = [ bundler-purifier.overlays.default ];
+      };
+      lobsters = pkgs.buildBundlerProject {
         src = ./.;
         name = "lobsters";
         buildInputs = [ pkgs.vips ];

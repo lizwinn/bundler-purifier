@@ -2,19 +2,14 @@
 #
 # The `bundler-purifier` library namespace of the nix-purifiers contract:
 # `readLock` (nix/lib/read-lock.nix), the lock of a Bundler project in
-# memory, and `buildBundlerProject` (nix/lib/build-bundler-project.nix),
-# which fetches with the shared library's `purifier` namespace.
+# memory. The builder is a package, which the package overlay adds as
+# `buildBundlerProject`.
 { ... }:
 {
 
   overlay = final: prev: {
-    bundler-purifier = (prev.bundler-purifier or { }) // rec {
+    bundler-purifier = (prev.bundler-purifier or { }) // {
       readLock = import ../../nix/lib/read-lock.nix { lib = final; };
-      buildBundlerProject = import ../../nix/lib/build-bundler-project.nix {
-        lib = final;
-        inherit (final) purifier;
-        inherit readLock;
-      };
     };
   };
 

@@ -1,10 +1,17 @@
 # SPDX-License-Identifier: MIT
 #
 # buildBundlerProject: the sandboxed builds of a Bundler project, from the
-# lockfile `bundler-purifier lock` writes. The flake publishes it in its
-# library as `lib.bundler-purifier.buildBundlerProject`:
+# lockfile `bundler-purifier lock` writes.
 #
-#   (lib.bundler-purifier.buildBundlerProject { inherit pkgs; src = ./.; }).packages.app
+# The file is a package for callPackage: the first argument set is what it
+# takes from the package set, and the result is the builder. The
+# bundler-purifier overlay (`overlays.default`) adds it to the package set
+# as `buildBundlerProject`, so a package written for callPackage takes it
+# like any other dependency:
+#
+#   { buildBundlerProject }: (buildBundlerProject { src = ./.; }).packages.app
+#
+# and `buildBundlerProject.override` replaces what it takes from the set.
 #
 # The builder returns the attributes of the nix-purifiers contract:
 #
@@ -37,14 +44,22 @@
 # evaluates, without building anything.
 {
   lib,
-  # The `purifier` namespace of the shared nix-purifiers library.
+  stdenv,
+  gitMinimal,
+  writeShellScriptBin,
+  symlinkJoin,
+  mkShell,
+  defaultGemConfig,
+  # The package set, for nixpkgs' Ruby of the minor version a lock was made
+  # with (ruby_<major>_<minor>), and for the shared library's fetchers.
+  pkgs,
+  # The `purifier` namespace of the shared nix-purifiers library, which the
+  # bundler-purifier overlay passes.
   purifier,
-  # lib.bundler-purifier.readLock (read-lock.nix).
+  # lib.bundler-purifier.readLock (read-lock.nix), which the overlay passes.
   readLock,
 }:
 {
-  # The package set the builds use.
-  pkgs,
   # The root of the Bundler project, where the Gemfile is.
   src,
   # The lockfile that `bundler-purifier lock` writes. It may lie outside
@@ -85,7 +100,6 @@
   externalPaths ? { },
 }:
 let
-  inherit (pkgs) stdenv gitMinimal writeShellScriptBin;
 
   # A file of the project, read without copying the whole project into the
   # store first.
@@ -267,7 +281,7 @@ let
     let
       parts = builtins.match "(.+)-([0-9][^-]*)(-.+)?\\.gem" (baseNameOf download.path);
       gemName = builtins.elemAt parts 0;
-      config = pkgs.defaultGemConfig.${gemName} or null;
+      config = defaultGemConfig.${gemName} or null;
       evaluated = builtins.tryEval (
         let
           attrs = config {
@@ -441,7 +455,7 @@ assert
     if lib.length (lib.attrNames gems) == 1 then
       lib.head (lib.attrValues gems)
     else if gems != { } then
-      pkgs.symlinkJoin {
+      symlinkJoin {
         name = "${name}-release";
         paths = lib.attrValues gems;
       }
@@ -468,7 +482,7 @@ assert
   # A shell with the Ruby, git, build tools and libraries of the `app`
   # build, for day-to-day work: native extensions compile in it as they do
   # in the sandbox, and gems that open a library through FFI find it.
-  devShell = pkgs.mkShell {
+  devShell = mkShell {
     packages = [
       ruby'
       gitMinimal

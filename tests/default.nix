@@ -9,8 +9,8 @@
 # as jobs of the same names, from tests/ci.
 {
   pkgs,
-  # lib.bundler-purifier.buildBundlerProject
-  buildBundlerProject,
+  # The flake's default package overlay, which adds buildBundlerProject.
+  overlay,
   cli,
   # The source of Lobsters at its pinned commit (tests/dependencies).
   lobsters,
@@ -18,7 +18,9 @@
 let
   inherit (pkgs) lib;
 
-  build = args: buildBundlerProject ({ inherit pkgs; } // args);
+  # Every fixture builds the way a user's package does: through
+  # buildBundlerProject of a package set the overlay applies to.
+  build = (pkgs.extend overlay).buildBundlerProject;
 
   # Runs `bundle exec ruby main.rb` in the project of a build and checks
   # its output.
