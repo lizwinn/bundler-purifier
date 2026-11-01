@@ -47,9 +47,14 @@ and fetches nothing.
 gemspec of the project changed. `bundler-purifier relock` relocks
 regardless.
 
-The lock run uses the Ruby that the command runs on. For a project that
-requires another Ruby, override the package:
-`bundler-purifier.cli.override { ruby = pkgs.ruby_3_3; }`.
+The lock run uses the Ruby the project asks for, in its `.ruby-version` or
+in the `RUBY VERSION` section of `Gemfile.lock`. When that differs from
+the Ruby the command runs on, the command builds nixpkgs' Ruby of that
+minor version. The project's `.bundle/config` applies to the lock run,
+except the settings that would narrow what is locked (groups, path,
+frozen and deployment), so every group is locked. The builds keep the
+committed `.bundle/config` too, so settings such as compile flags for a
+native extension (`BUNDLE_BUILD__<gem>`) apply in the sandbox.
 
 ## Use
 
@@ -175,6 +180,22 @@ This builds `packages.my-gem` and pushes the gem file with `gem push`.
 Options after the gem name go to `gem push`, and credentials work as they
 do for `gem push`.
 
+## Troubleshooting
+
+Each of these mistakes fails, when Nix evaluates the build and in the
+command, with a message that says what went wrong:
+
+- **The Gemfile, `Gemfile.lock` or a gemspec changed since the lock was
+  made**, for example after `bundle add` or `bundle update`: run
+  `bundler-purifier lock`.
+- **`bundler-purifier.lock.json` was edited by hand**, with an entry removed
+  or a hash changed: its content no longer matches its `contentHash`. Run
+  `bundler-purifier relock`.
+- **`bundler-purifier.lock.json` is cut short or overwritten**: run
+  `bundler-purifier relock`.
+- **The lockfile has an older lock format**: run `bundler-purifier relock`
+  with the current bundler-purifier.
+
 ## Limits
 
 - **Path sources given by absolute path.** Bundler writes such a path into
@@ -207,13 +228,17 @@ was inspired by nixcloud's
 
 ## Tests
 
-`nix flake check` builds the fixtures under `tests/fixtures` in the
-sandbox and runs each. `tests/interactive.sh` tests what runs outside the
-sandbox: it relocks each fixture and compares the result with the
-committed lockfiles, installs the app fixture with `install` and runs it,
-and pushes the library fixture's gem to a stand-in gem host
-(`tests/fake-gem-server.rb`). CI runs both on x86_64-linux and
-aarch64-linux.
+`nix flake check` runs the unit tests of the lock run's logic
+(`tests/unit`), and builds and runs the fixtures under `tests/fixtures` in
+the sandbox. The fixtures cover every kind of source: gem servers, with
+native extensions and precompiled platform gems, git, git with
+submodules, and paths inside and outside the project. `tests/interactive.sh`
+tests what runs outside the sandbox. It relocks each fixture and compares
+the result with the committed lockfiles byte for byte, installs the app
+fixture with `install` and runs it, pushes the library fixture's gem to a
+stand-in gem host (`tests/fake-gem-server.rb`), and checks that each
+mistake under Troubleshooting fails with its message. CI runs both on
+x86_64-linux and aarch64-linux.
 
 ## License
 
