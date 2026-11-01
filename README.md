@@ -1,55 +1,102 @@
 # bundler-purifier
 
-bundler-purifier lets Nix build a Bundler project offline, in its sandbox,
-from the project's own `Gemfile.lock`. Nix reads `Gemfile.lock` when it
-evaluates: each gem file's source, and its SHA-256 from the `CHECKSUMS`
-section when `Gemfile.lock` has one. `bundler-purifier lock` writes
-`bundler-purifier.lock.json` beside it with only what `Gemfile.lock`
-lacks, such as the hashes of git checkouts. The project needs no generated
-Nix files.
+bundler-purifier keeps Bundler's development workflow on locked,
+Nix-resolved dependencies. Use the normal build and test commands in your
+working tree; building the project itself in the Nix sandbox is an
+optional next step.
+
+It follows the [purifier contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
 
 bundler-purifier is part of [nix-purifiers](https://nix-purifiers.github.io)
 and meets its [contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
 The shared [purifier](https://github.com/nix-purifiers/purifier) library
 fetches the downloads. It builds on x86_64-linux and aarch64-linux.
 
+## Installation
+
+Install the integration into your Nix profile once:
+
+```sh
+nix profile install 'github:nix-purifiers/bundler-purifier'
+```
+
+This installs the purifier CLI. The workflow below prepares the native
+tool's cache, hook or environment; follow that activation step before using
+your usual commands. The ordinary tool itself remains your normal
+installation unless the setup explicitly supplies a toolchain.
+
+`nix shell` makes an integration available temporarily instead of installing
+it. Keep using the activation steps below where a project environment or
+prefetched cache is required.
+
 ## Quickstart
 
-In the project root:
+Install Nix, then run the following from your existing project's root.
+The setup prepares the locked dependencies and the integration that
+Bundler's normal commands use:
 
 ```zsh
 nix run github:nix-purifiers/bundler-purifier -- lock
+nix run github:nix-purifiers/bundler-purifier -- prefetch
+nix develop .bundler-purifier/shell
+bundle exec rake
 ```
 
-Commit `bundler-purifier.lock.json` and `Gemfile.lock` to the project's
-repository. We recommend this setup, and the builder and the commands look
-for both files there by default. A Nix build on Linux needs a Linux
-platform in `Gemfile.lock`; `lock` warns when there is none, and
-`bundle lock --add-platform x86_64-linux aarch64-linux` adds them. With
-`bundle lock --add-checksums` (Bundler 2.5 and later, the default from
-Bundler 4), `Gemfile.lock` records every gem's hash, and the purifier
-lockfile shrinks to a few fields.
+Commit the lockfiles that the lock command writes, including the build
+tool's own lockfile when it has one. Keep using the project's usual build,
+test and editor commands with this setup. Nix provides the locked
+dependencies; the development commands above run outside the Nix sandbox.
+No project Nix files are needed for this workflow.
 
-Then build the project from its directory, with no Nix file added to it:
+Sandboxed builds of the whole project are an optional
+[next step](#building-the-project-with-nix).
 
-```zsh
-nix build --impure --expr '
-  let
-    purifier = builtins.getFlake "github:nix-purifiers/bundler-purifier";
-    pkgs = import purifier.inputs.nixpkgs {
-      system = builtins.currentSystem;
-      overlays = [ purifier.overlays.default ];
-    };
-  in
-  (pkgs.bundler-purifier.buildBundlerProject { src = ./.; }).packages.app'
-```
+## Development loop
 
-This uses the purifier's pinned nixpkgs, matching the lock command above.
-To build with ambient `<nixpkgs>` from your Nix search path instead,
-replace `import purifier.inputs.nixpkgs` with `import <nixpkgs>`.
-Both forms need no Nix files in your project. The build tool and language
-versions must match the lockfile; with ambient nixpkgs, lock with the
-purifier from that package set or pass a compatible toolchain to the builder.
+Day-to-day work goes through Bundler's own commands: `bundle exec`,
+`bundle exec rake`, `bundle exec rails server`. After changing the
+Gemfile, or after `bundle add` or `bundle update`, run
+`bundler-purifier lock`, which keeps Bundler's resolution and records
+what the new gems need. `bundler-purifier update [<gem>...]` re-resolves
+every gem, or the named ones, with `bundle update`, and then locks.
+
+`lock` relocks only when the Gemfile, `Gemfile.lock` or a gemspec changed,
+and `lock --force` relocks regardless; a relock of an unchanged project
+writes the same lockfile byte for byte. The lock run uses the Ruby the
+project asks for, in `.ruby-version` or in the `RUBY VERSION` section of
+`Gemfile.lock`, and builds nixpkgs' Ruby of that minor version when it
+differs from the Ruby the command runs on. The project's `.bundle/config`
+applies to the lock run, except the settings that would narrow what is
+locked (groups, path, frozen and deployment). The builds keep the
+committed `.bundle/config` too, so settings such as compile flags for a
+native extension (`BUNDLE_BUILD__<gem>`) apply in the sandbox.
+
+`bundler-purifier publish` builds the `release` with Nix and pushes each
+gem file with `gem push`. Options after `publish` go to `gem push`, and
+credentials work as they do for `gem push`.
+
+A gem added to the Gemfile while offline stops in Bundler's own
+resolution, with Bundler's message rather than one naming
+`bundler-purifier lock`. Bundler resolves before any hook it offers runs,
+so bundler-purifier has no point at which to add its message. Run
+`bundler-purifier lock` while online after adding a gem.
+
+bundler-purifier is a standalone command, not a Bundler plugin. A Bundler
+plugin is declared in the Gemfile, which adds it to the gems the project
+locks, or installed per user from a gem server. bundler-purifier runs from
+its flake instead, and each of its commands wraps Bundler's own commands.
+`lock` runs `bundle cache --all-platforms --no-install` with empty caches
+to download every locked gem, and runs `bundle lock` first when there is
+no `Gemfile.lock`. `update` runs `bundle update`, and `prefetch` runs
+`bundle install --local`.
+
+## Building the project with Nix
+
+Once the native development workflow is working, you can also build and
+test the whole project in the Nix sandbox. For this step, keep a flake or
+another Nix build definition in the project's repository, or maintain an
+external packaging repository that points at its sources and lockfiles.
+The builder consumes the same lockfiles as the development workflow.
 
 `result` is the app with its bundle installed. The flake's
 `overlays.default` adds one attribute to a package set, the scope
@@ -144,44 +191,29 @@ that path does not exist yet. The dev shell of the flake that calls the
 builder can set both variables, so a developer in that shell runs the
 commands with no flag.
 
-## Development loop
+### One-off builds without a project Nix file
 
-Day-to-day work goes through Bundler's own commands: `bundle exec`,
-`bundle exec rake`, `bundle exec rails server`. After changing the
-Gemfile, or after `bundle add` or `bundle update`, run
-`bundler-purifier lock`, which keeps Bundler's resolution and records
-what the new gems need. `bundler-purifier update [<gem>...]` re-resolves
-every gem, or the named ones, with `bundle update`, and then locks.
+For an ad hoc build, the builder can also be evaluated directly from the
+project root. Replace the example package name with one from your project:
 
-`lock` relocks only when the Gemfile, `Gemfile.lock` or a gemspec changed,
-and `lock --force` relocks regardless; a relock of an unchanged project
-writes the same lockfile byte for byte. The lock run uses the Ruby the
-project asks for, in `.ruby-version` or in the `RUBY VERSION` section of
-`Gemfile.lock`, and builds nixpkgs' Ruby of that minor version when it
-differs from the Ruby the command runs on. The project's `.bundle/config`
-applies to the lock run, except the settings that would narrow what is
-locked (groups, path, frozen and deployment). The builds keep the
-committed `.bundle/config` too, so settings such as compile flags for a
-native extension (`BUNDLE_BUILD__<gem>`) apply in the sandbox.
+```zsh
+nix build --impure --expr '
+  let
+    purifier = builtins.getFlake "github:nix-purifiers/bundler-purifier";
+    pkgs = import purifier.inputs.nixpkgs {
+      system = builtins.currentSystem;
+      overlays = [ purifier.overlays.default ];
+    };
+  in
+  (pkgs.bundler-purifier.buildBundlerProject { src = ./.; }).packages.app'
+```
 
-`bundler-purifier publish` builds the `release` with Nix and pushes each
-gem file with `gem push`. Options after `publish` go to `gem push`, and
-credentials work as they do for `gem push`.
-
-A gem added to the Gemfile while offline stops in Bundler's own
-resolution, with Bundler's message rather than one naming
-`bundler-purifier lock`. Bundler resolves before any hook it offers runs,
-so bundler-purifier has no point at which to add its message. Run
-`bundler-purifier lock` while online after adding a gem.
-
-bundler-purifier is a standalone command, not a Bundler plugin. A Bundler
-plugin is declared in the Gemfile, which adds it to the gems the project
-locks, or installed per user from a gem server. bundler-purifier runs from
-its flake instead, and each of its commands wraps Bundler's own commands.
-`lock` runs `bundle cache --all-platforms --no-install` with empty caches
-to download every locked gem, and runs `bundle lock` first when there is
-no `Gemfile.lock`. `update` runs `bundle update`, and `prefetch` runs
-`bundle install --local`.
+This uses the purifier's pinned nixpkgs, matching the lock command above.
+To build with ambient `<nixpkgs>` from your Nix search path instead,
+replace `import purifier.inputs.nixpkgs` with `import <nixpkgs>`.
+Both forms need no Nix files in your project. The build tool and language
+versions must match the lockfile; with ambient nixpkgs, lock with the
+purifier from that package set or pass a compatible toolchain to the builder.
 
 ## Working offline
 
@@ -275,6 +307,11 @@ each time `bundle exec` starts; in the installed app a gemspec that calls
 repository" to stderr, and the app runs normally.
 
 ## Examples
+
+For day-to-day work on these projects, use the native-tool setup and
+commands in [Quickstart](#quickstart) and [Development loop](#development-loop).
+The Nix expressions below show optional sandboxed packaging of those
+projects.
 
 ### A Rails app: Lobsters
 
