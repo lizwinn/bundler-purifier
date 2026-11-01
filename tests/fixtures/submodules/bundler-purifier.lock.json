@@ -1,107 +1,23 @@
 {
-  "version": 2,
-  "ruby": "3.4.11",
-  "bundler": "2.6.9",
-  "platforms": [
-    "aarch64-linux-gnu",
-    "aarch64-linux-musl",
-    "arm-linux-gnu",
-    "arm-linux-musl",
-    "arm64-darwin",
-    "ruby",
-    "x86-linux-gnu",
-    "x86-linux-musl",
-    "x86_64-darwin",
-    "x86_64-linux-gnu",
-    "x86_64-linux-musl"
-  ],
+  "version": 3,
   "definitionHash": "sha256-S/x3VtFLrS8PDRTMhvBKqeseu87BIPdUfRQXFo0Zkgs=",
-  "downloads": [
-    {
-      "path": "bundler-2.6.9.gem",
-      "url": "https://rubygems.org/gems/bundler-2.6.9.gem",
-      "mirrors": [],
-      "hash": "sha256-olZ1/70FWuEYZ2bMHhILTPYliOiKu1m5nFfiKxxVyes="
-    },
-    {
-      "path": "ffi-1.17.4-aarch64-linux-gnu.gem",
-      "url": "https://rubygems.org/gems/ffi-1.17.4-aarch64-linux-gnu.gem",
-      "mirrors": [],
-      "hash": "sha256-sgjwb5H/2PXhGT2jyuPSzPwn/Db7pXe69pjSbZHAgN8="
-    },
-    {
-      "path": "ffi-1.17.4-aarch64-linux-musl.gem",
-      "url": "https://rubygems.org/gems/ffi-1.17.4-aarch64-linux-musl.gem",
-      "mirrors": [],
-      "hash": "sha256-koa3phXyZ2JFKDrvCgo7R1rjquK7VEi6rOYwu3e5Hzk="
-    },
-    {
-      "path": "ffi-1.17.4-arm-linux-gnu.gem",
-      "url": "https://rubygems.org/gems/ffi-1.17.4-arm-linux-gnu.gem",
-      "mirrors": [],
-      "hash": "sha256-1tvd98t3v5VUEa9fGHpluM03jLADwVwFaX9f7uHLFWQ="
-    },
-    {
-      "path": "ffi-1.17.4-arm-linux-musl.gem",
-      "url": "https://rubygems.org/gems/ffi-1.17.4-arm-linux-musl.gem",
-      "mirrors": [],
-      "hash": "sha256-nUg43tBGW+9uJCaTX2vMkxNLZhZ4WoT/0qPYK8PPb5U="
-    },
-    {
-      "path": "ffi-1.17.4-arm64-darwin.gem",
-      "url": "https://rubygems.org/gems/ffi-1.17.4-arm64-darwin.gem",
-      "mirrors": [],
-      "hash": "sha256-GQcarxQZJRsKRoUqv5YOdzMKOzNNE6SrUdWLMak3ABs="
-    },
-    {
-      "path": "ffi-1.17.4-x86-linux-gnu.gem",
-      "url": "https://rubygems.org/gems/ffi-1.17.4-x86-linux-gnu.gem",
-      "mirrors": [],
-      "hash": "sha256-OOFQ319MpVXiW+ykCQgjrglle87e0VTjxS+GMcHtcs8="
-    },
-    {
-      "path": "ffi-1.17.4-x86-linux-musl.gem",
-      "url": "https://rubygems.org/gems/ffi-1.17.4-x86-linux-musl.gem",
-      "mirrors": [],
-      "hash": "sha256-++7A/Hx5W8+G9iO7GNMeoYIPe9WA4XA6PTdA1SdDeAk="
-    },
-    {
-      "path": "ffi-1.17.4-x86_64-darwin.gem",
-      "url": "https://rubygems.org/gems/ffi-1.17.4-x86_64-darwin.gem",
-      "mirrors": [],
-      "hash": "sha256-qnA5BSPPMjUJbPZJYrcJtM+9XAgqLLKucU6w/izNpJY="
-    },
-    {
-      "path": "ffi-1.17.4-x86_64-linux-gnu.gem",
-      "url": "https://rubygems.org/gems/ffi-1.17.4-x86_64-linux-gnu.gem",
-      "mirrors": [],
-      "hash": "sha256-nT2xTC6uB0s4L6nAg/6VrsbgoUUdoknqsJbDQAK8dS0="
-    },
-    {
-      "path": "ffi-1.17.4-x86_64-linux-musl.gem",
-      "url": "https://rubygems.org/gems/ffi-1.17.4-x86_64-linux-musl.gem",
-      "mirrors": [],
-      "hash": "sha256-P9+YiEg94AX4740c8tOyDYZiavIGy/eA9qahJDmpxJ4="
-    },
-    {
-      "path": "ffi-1.17.4.gem",
-      "url": "https://rubygems.org/gems/ffi-1.17.4.gem",
-      "mirrors": [],
-      "hash": "sha256-vNFkLgbw0W/J4JrG1Jw6cpi5eJvLWBJzAvk05DfWCs8="
-    },
-    {
-      "path": "sassc-ruby-ceed730adef7",
-      "git": {
-        "url": "https://github.com/sass/sassc-ruby",
-        "rev": "ceed730adef7e6cacd0167c6a3ba4109f67a3ff8",
-        "submodules": true,
-        "leaveDotGit": false,
-        "commitObject": null
-      },
-      "hash": "sha256-f8iwCsjwuqC1cZSr5do1uyNmeuLUQvDMThB1snUjtYg="
-    }
-  ],
-  "gems": [],
-  "externalPaths": [],
-  "contentHash": "sha256-kjxvjHfn9EeRPG7I1+mejPqauB6IO1oSc9cha3LUj7U="
+  "ruby": "3.4.11",
+  "bundlerHash": "sha256-olZ1/70FWuEYZ2bMHhILTPYliOiKu1m5nFfiKxxVyes=",
+  "gemHashes": {
+    "ffi-1.17.4-aarch64-linux-gnu.gem": "sha256-sgjwb5H/2PXhGT2jyuPSzPwn/Db7pXe69pjSbZHAgN8=",
+    "ffi-1.17.4-aarch64-linux-musl.gem": "sha256-koa3phXyZ2JFKDrvCgo7R1rjquK7VEi6rOYwu3e5Hzk=",
+    "ffi-1.17.4-arm-linux-gnu.gem": "sha256-1tvd98t3v5VUEa9fGHpluM03jLADwVwFaX9f7uHLFWQ=",
+    "ffi-1.17.4-arm-linux-musl.gem": "sha256-nUg43tBGW+9uJCaTX2vMkxNLZhZ4WoT/0qPYK8PPb5U=",
+    "ffi-1.17.4-arm64-darwin.gem": "sha256-GQcarxQZJRsKRoUqv5YOdzMKOzNNE6SrUdWLMak3ABs=",
+    "ffi-1.17.4-x86-linux-gnu.gem": "sha256-OOFQ319MpVXiW+ykCQgjrglle87e0VTjxS+GMcHtcs8=",
+    "ffi-1.17.4-x86-linux-musl.gem": "sha256-++7A/Hx5W8+G9iO7GNMeoYIPe9WA4XA6PTdA1SdDeAk=",
+    "ffi-1.17.4-x86_64-darwin.gem": "sha256-qnA5BSPPMjUJbPZJYrcJtM+9XAgqLLKucU6w/izNpJY=",
+    "ffi-1.17.4-x86_64-linux-gnu.gem": "sha256-nT2xTC6uB0s4L6nAg/6VrsbgoUUdoknqsJbDQAK8dS0=",
+    "ffi-1.17.4-x86_64-linux-musl.gem": "sha256-P9+YiEg94AX4740c8tOyDYZiavIGy/eA9qahJDmpxJ4=",
+    "ffi-1.17.4.gem": "sha256-vNFkLgbw0W/J4JrG1Jw6cpi5eJvLWBJzAvk05DfWCs8="
+  },
+  "gitHashes": {
+    "ceed730adef7e6cacd0167c6a3ba4109f67a3ff8": "sha256-f8iwCsjwuqC1cZSr5do1uyNmeuLUQvDMThB1snUjtYg="
+  },
+  "contentHash": "sha256-ncgTsPJOv8y2mywb8+Jxxx89ul7Iplc6ESfonh+IGfo="
 }

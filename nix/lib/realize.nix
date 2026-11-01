@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: MIT
 #
-# What `bundler-purifier install` builds for the interactive mode: the gem
-# cache of the lockfile, the same derivation the sandboxed build uses. The
-# CLI builds it with an out-link, which is the GC root that keeps every
-# locked file alive, and installs from a writable copy of it.
+# The builder's result for the project the CLI runs in, as the CLI builds
+# it outside the flake: `bundler-purifier prefetch` keeps `gemCache` with an
+# out-link and `devShell` as a shell profile, and `bundler-purifier
+# publish` builds `release`.
 {
+  # The root of the project, as an absolute path in a string.
+  root,
+  # The purifier lockfile, as an absolute path in a string.
   lockFile,
   # The nixpkgs the CLI was built with.
   nixpkgs,
@@ -13,8 +16,13 @@
 }:
 let
   pkgs = import nixpkgs { };
+  buildBundlerProject = import ./build-bundler-project.nix {
+    inherit (pkgs) lib;
+    inherit ((builtins.getFlake purifierFlake).lib) purifier;
+  };
 in
-pkgs.callPackage ./gem-cache.nix {
-  inherit lockFile;
-  inherit ((builtins.getFlake purifierFlake).lib) purifier;
+buildBundlerProject {
+  inherit pkgs;
+  src = /. + root;
+  lockFile = /. + lockFile;
 }

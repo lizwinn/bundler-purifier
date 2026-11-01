@@ -1,31 +1,36 @@
 # SPDX-License-Identifier: MIT
 #
 # The checks: sandboxed builds of the fixtures under fixtures/, from their
-# committed lockfiles, and a run of what each build produced. Each
-# fixture's bundler-purifier.lock.json is written by `bundler-purifier
-# lock` in the fixture's directory. tests/interactive.sh covers what runs
-# outside the sandbox: the lock run, `install` and `push`.
+# committed lockfiles, and a run of what each build produced; the
+# conformance checks of the nix-purifiers contract that the sandbox can
+# run; the unit tests; and Lobsters, a real-world project. Each fixture's
+# lockfile is written by `bundler-purifier lock`. The conformance checks
+# that need the network or Nix itself (relock, rebuild, offline) run in CI
+# as jobs of the same names, from tests/ci.
 {
   pkgs,
-  overlay,
+  # lib.bundler-purifier.buildBundlerProject
+  buildBundlerProject,
   cli,
   # The source of Lobsters at its pinned commit (tests/dependencies).
   lobsters,
 }:
 let
-  purified = pkgs.extend overlay;
+  inherit (pkgs) lib;
+
+  build = args: buildBundlerProject ({ inherit pkgs; } // args);
 
   # Runs `bundle exec ruby main.rb` in the project of a build and checks
   # its output.
   runsMain =
     name: project: expected:
-    purified.runCommand name
+    pkgs.runCommand name
       {
-        nativeBuildInputs = [ project.bundle ];
+        nativeBuildInputs = [ project.packages.bundle ];
       }
       ''
         export HOME="$TMPDIR"
-        cd ${project.app}/${project.app.projectDir}
+        cd ${project.packages.app}/${project.packages.app.projectDir}
         output=$(bundle exec ruby main.rb)
         echo "$output"
         case "$output" in
@@ -35,44 +40,134 @@ let
         touch "$out"
       '';
 
-  inherit (purified) lib;
-
-  app = purified.buildBundlerProject {
+  app = build {
     src = ./fixtures/app;
     name = "fixture-app";
     externalPaths."../shared-gem" = ./fixtures/shared-gem;
   };
 
-  library = purified.buildBundlerProject {
+  library = build {
     src = ./fixtures/library;
     name = "fixture-library";
-    doCheck = true;
   };
 
-  submodules = purified.buildBundlerProject {
+  submodules = build {
     src = ./fixtures/submodules;
     name = "fixture-submodules";
+  };
+
+  # A fixture kept external: its source holds only the Gemfile and main.rb,
+  # and the flake that builds it keeps Gemfile.lock and the purifier
+  # lockfile outside it.
+  external = build {
+    src = ./fixtures/external/project;
+    name = "fixture-external";
+    gemfileLock = ./fixtures/external/Gemfile.lock;
+    lockFile = ./fixtures/external/bundler-purifier.lock.json;
   };
 
   # A real-world project: Lobsters, built from its own Gemfile.lock and the
   # lockfile that `bundler-purifier lock` wrote for it, which lives here
   # rather than in the Lobsters tree.
-  lobstersBuild = purified.buildBundlerProject {
+  lobstersBuild = build {
     src = lobsters;
     lockFile = ./real/lobsters/bundler-purifier.lock.json;
     name = "lobsters";
     # ruby-vips opens libvips through FFI when the app loads.
     buildInputs = [ pkgs.vips ];
   };
+
+  # The library fixture with one of its lockfiles damaged, for the
+  # conformance checks of a lockfile that must fail.
+  libraryLock = builtins.fromJSON (builtins.readFile ./fixtures/library/bundler-purifier.lock.json);
+  # The contentHash `bundler-purifier lock` would write for a lock.
+  withContentHash =
+    lock:
+    lock
+    // {
+      contentHash = builtins.convertHash {
+        hash = builtins.hashString "sha256" (builtins.toJSON (builtins.removeAttrs lock [ "contentHash" ]));
+        hashAlgo = "sha256";
+        toHashFormat = "sri";
+      };
+    };
+  damaged = {
+    # The Gemfile.lock changed after the lock was made.
+    stale = {
+      gemfileLock = builtins.toFile "Gemfile.lock" (
+        builtins.readFile ./fixtures/library/Gemfile.lock + "\n"
+      );
+    };
+    # A hash changed by hand.
+    tampered = {
+      lockFile = builtins.toFile "bundler-purifier.lock.json" (
+        builtins.toJSON (libraryLock // { bundlerHash = "sha256-${lib.fixedWidthString 43 "A" ""}="; })
+      );
+    };
+    # A gem's hash removed, with a contentHash that matches what is left.
+    missing = {
+      lockFile = builtins.toFile "bundler-purifier.lock.json" (
+        builtins.toJSON (withContentHash (libraryLock // { gemHashes = { }; }))
+      );
+    };
+    # The lockfile cut short.
+    malformed = {
+      lockFile = builtins.toFile "bundler-purifier.lock.json" (
+        builtins.substring 0 120 (builtins.readFile ./fixtures/library/bundler-purifier.lock.json)
+      );
+    };
+  };
+
+  # A conformance check of a damaged lockfile: Nix fails to evaluate the
+  # build, and the CLI fails before it builds anything, with a message that
+  # names `expected`.
+  failsWith =
+    kind: expected:
+    let
+      args = damaged.${kind};
+      evaluated = builtins.tryEval (build ({ src = ./fixtures/library; } // args)).packages.app.drvPath;
+    in
+    assert
+      !evaluated.success || throw "conformance-${kind}: Nix evaluated a build from a ${kind} lockfile";
+    pkgs.runCommand "conformance-${kind}"
+      {
+        nativeBuildInputs = [ cli ];
+      }
+      ''
+        export HOME="$TMPDIR" LC_ALL=C.UTF-8
+        cp -r ${./fixtures/library} project
+        chmod -R u+w project
+        ${lib.optionalString (args ? gemfileLock) "cp ${args.gemfileLock} project/Gemfile.lock"}
+        ${lib.optionalString (args ? lockFile) "cp ${args.lockFile} project/bundler-purifier.lock.json"}
+        cd project
+        if output=$(bundler-purifier prefetch 2>&1); then
+          echo "conformance-${kind}: the CLI accepted a ${kind} lockfile" >&2
+          exit 1
+        fi
+        echo "$output"
+        case "$output" in
+          *${lib.escapeShellArg expected}*) ;;
+          *) echo "conformance-${kind}: expected the message to name: ${expected}" >&2; exit 1 ;;
+        esac
+        touch "$out"
+      '';
 in
 {
   inherit cli;
 
+  conformance-stale = failsWith "stale" "run bundler-purifier lock";
+  conformance-tampered = failsWith "tampered" "was changed by hand";
+  conformance-missing = failsWith "missing" "run bundler-purifier lock";
+  conformance-malformed = failsWith "malformed" "run bundler-purifier lock --force";
+
+  # The fixture kept external builds from the lockfiles outside its source.
+  conformance-external = runsMain "conformance-external" external "external purified";
+
   # The unit tests of the lock run's logic (tests/unit).
   unit =
-    purified.runCommand "bundler-purifier-unit-tests"
+    pkgs.runCommand "bundler-purifier-unit-tests"
       {
-        nativeBuildInputs = [ purified.ruby ];
+        nativeBuildInputs = [ pkgs.ruby ];
       }
       ''
         export HOME="$TMPDIR" LC_ALL=C.UTF-8
@@ -87,9 +182,9 @@ in
 
   # The gem file of the path gem inside the app.
   fixture-app-helper-gem =
-    purified.runCommand "fixture-app-helper-gem"
+    pkgs.runCommand "fixture-app-helper-gem"
       {
-        nativeBuildInputs = [ app.app.ruby ];
+        nativeBuildInputs = [ app.packages.app.ruby ];
         gem = app.packages.helper.gemFile;
       }
       ''
@@ -102,30 +197,34 @@ in
   # extension compiles libsass from the submodule's checkout.
   fixture-submodules = runsMain "fixture-submodules-runs" submodules ".purified{width:3px}";
 
-  # The shell for working on Lobsters, which tests/interactive.sh uses.
-  real-lobsters-shell = lobstersBuild.devShell;
+  # The library's test run, its `tests`.
+  fixture-library-tests = library.tests;
 
-  # Lobsters installs its bundle of 180 gems offline in the sandbox, with
-  # Ruby 4.0 and Bundler 4.0, and Rails loads with it.
-  real-lobsters =
-    purified.runCommand "real-lobsters"
+  # The library's package is the gem file its gemspec builds, with the
+  # files `git ls-files` lists, and it is the release.
+  fixture-library =
+    pkgs.runCommand "fixture-library-gem"
       {
-        nativeBuildInputs = [ lobstersBuild.bundle ];
+        nativeBuildInputs = [ library.packages.app.ruby ];
+        gem = library.packages.greeting.gemFile;
+        release = library.release;
       }
       ''
         export HOME="$TMPDIR"
-        cd ${lobstersBuild.app}
-        bundle exec rails --version | tee "$out"
-        grep -q '^Rails ' "$out"
-        # A gem that opens its library at run time finds it.
-        bundle exec ruby -e 'require "vips"; puts "libvips #{Vips.version_string}"' | tee -a "$out"
-        grep -q '^libvips ' "$out"
+        gem specification "$gem" version | grep -q 0.2.0
+        files=$(gem specification "$gem" files)
+        echo "$files"
+        echo "$files" | grep -q lib/greeting.rb
+        echo "$files" | grep -q lib/greeting/version.rb
+        echo "$files" | grep -q exe/greet
+        test -f "$release/greeting-0.2.0.gem"
+        touch "$out"
       '';
 
   # The executable that the library's gemspec declares, which the lock
   # names, runs with the library's bundle.
   fixture-library-executable =
-    purified.runCommand "fixture-library-executable"
+    pkgs.runCommand "fixture-library-executable"
       {
         nativeBuildInputs = [ library.executables.greet ];
       }
@@ -140,23 +239,23 @@ in
         touch "$out"
       '';
 
-  # The library's `app` build runs its tests; its package is the gem file
-  # its gemspec builds, with the files `git ls-files` lists.
-  fixture-library =
-    purified.runCommand "fixture-library-gem"
+  # The shell for working on Lobsters, which CI's walkthrough uses.
+  real-lobsters-shell = lobstersBuild.devShell;
+
+  # Lobsters installs its bundle of 180 gems offline in the sandbox, with
+  # Ruby 4.0 and Bundler 4.0, and Rails loads with it.
+  real-lobsters =
+    pkgs.runCommand "real-lobsters"
       {
-        nativeBuildInputs = [ library.app.ruby ];
-        gem = library.packages.greeting.gemFile;
-        checked = library.app;
+        nativeBuildInputs = [ lobstersBuild.packages.bundle ];
       }
       ''
         export HOME="$TMPDIR"
-        gem specification "$gem" version | grep -q 0.2.0
-        files=$(gem specification "$gem" files)
-        echo "$files"
-        echo "$files" | grep -q lib/greeting.rb
-        echo "$files" | grep -q lib/greeting/version.rb
-        echo "$files" | grep -q exe/greet
-        touch "$out"
+        cd ${lobstersBuild.packages.app}
+        bundle exec rails --version | tee "$out"
+        grep -q '^Rails ' "$out"
+        # A gem that opens its library at run time finds it.
+        bundle exec ruby -e 'require "vips"; puts "libvips #{Vips.version_string}"' | tee -a "$out"
+        grep -q '^libvips ' "$out"
       '';
 }

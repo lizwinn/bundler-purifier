@@ -57,7 +57,7 @@
           {
             checks = import ../../../tests {
               inherit pkgs;
-              overlay = self.overlays.default;
+              inherit (self.lib.bundler-purifier) buildBundlerProject;
               inherit (self.packages.${system}) cli;
               inherit (inputs) lobsters;
             };

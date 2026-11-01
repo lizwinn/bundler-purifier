@@ -1,114 +1,23 @@
 {
-  "version": 2,
-  "ruby": "3.4.11",
-  "bundler": "2.6.9",
-  "platforms": [
-    "aarch64-linux-gnu",
-    "aarch64-linux-musl",
-    "arm-linux-gnu",
-    "arm-linux-musl",
-    "arm64-darwin",
-    "x86_64-darwin",
-    "x86_64-linux-gnu",
-    "x86_64-linux-musl"
-  ],
+  "version": 3,
   "definitionHash": "sha256-9waaYrAHBs7t4yKbPrO6BmLmrMcujZSVfVFyuew9++M=",
-  "downloads": [
-    {
-      "path": "bundler-2.6.9.gem",
-      "url": "https://rubygems.org/gems/bundler-2.6.9.gem",
-      "mirrors": [],
-      "hash": "sha256-olZ1/70FWuEYZ2bMHhILTPYliOiKu1m5nFfiKxxVyes="
-    },
-    {
-      "path": "msgpack-1.8.7.gem",
-      "url": "https://rubygems.org/gems/msgpack-1.8.7.gem",
-      "mirrors": [],
-      "hash": "sha256-3+/sdhtfkEfm6NldLH+K9LNyXZhKAZQq3FM6qBmi3zM="
-    },
-    {
-      "path": "nokogiri-1.19.4-aarch64-linux-gnu.gem",
-      "url": "https://rubygems.org/gems/nokogiri-1.19.4-aarch64-linux-gnu.gem",
-      "mirrors": [],
-      "hash": "sha256-Emn7ZEpt5AUFelPdXHYrEgm0PKdCT4OUVNPbxnfDGo8="
-    },
-    {
-      "path": "nokogiri-1.19.4-aarch64-linux-musl.gem",
-      "url": "https://rubygems.org/gems/nokogiri-1.19.4-aarch64-linux-musl.gem",
-      "mirrors": [],
-      "hash": "sha256-NcZbnOcrO7AyB72+cGeRUBncGMG5tZE5aEvWaQ/dAa8="
-    },
-    {
-      "path": "nokogiri-1.19.4-arm-linux-gnu.gem",
-      "url": "https://rubygems.org/gems/nokogiri-1.19.4-arm-linux-gnu.gem",
-      "mirrors": [],
-      "hash": "sha256-owExPji7Bl1oI555c0vNb1b7bvqs694p6avypHNTQMo="
-    },
-    {
-      "path": "nokogiri-1.19.4-arm-linux-musl.gem",
-      "url": "https://rubygems.org/gems/nokogiri-1.19.4-arm-linux-musl.gem",
-      "mirrors": [],
-      "hash": "sha256-WIkjwQG8+niGlzTSR9JbWYZ0Mj5/IkdPxGj25WRzEes="
-    },
-    {
-      "path": "nokogiri-1.19.4-arm64-darwin.gem",
-      "url": "https://rubygems.org/gems/nokogiri-1.19.4-arm64-darwin.gem",
-      "mirrors": [],
-      "hash": "sha256-pG25hTKG5ll7NuvGlTgX0VrPOimVg+s/if3G+R3WNSc="
-    },
-    {
-      "path": "nokogiri-1.19.4-x86_64-darwin.gem",
-      "url": "https://rubygems.org/gems/nokogiri-1.19.4-x86_64-darwin.gem",
-      "mirrors": [],
-      "hash": "sha256-f9FwV9Ph8A6ZVKdLPNdlldPUpe8jO37ZWZBHwgT3BVE="
-    },
-    {
-      "path": "nokogiri-1.19.4-x86_64-linux-gnu.gem",
-      "url": "https://rubygems.org/gems/nokogiri-1.19.4-x86_64-linux-gnu.gem",
-      "mirrors": [],
-      "hash": "sha256-N5+uRAsokV4/GddSzi3PhGXtKy++/Sp8oN1Je8mBoGo="
-    },
-    {
-      "path": "nokogiri-1.19.4-x86_64-linux-musl.gem",
-      "url": "https://rubygems.org/gems/nokogiri-1.19.4-x86_64-linux-musl.gem",
-      "mirrors": [],
-      "hash": "sha256-F9+3wfoZSuAvv3xRp6/I0ngEWrP9rP2G+R0C17J0Rws="
-    },
-    {
-      "path": "racc-1.8.1.gem",
-      "url": "https://rubygems.org/gems/racc-1.8.1.gem",
-      "mirrors": [],
-      "hash": "sha256-Sn9pKWkdvsi1IJoLNzvCYUiCtV/F0uRHohqqaRMD1i8="
-    },
-    {
-      "path": "rainbow-accffb58fb0d",
-      "git": {
-        "url": "https://github.com/ku1ik/rainbow",
-        "rev": "accffb58fb0dedd17d68f484031a571fd905acb3",
-        "submodules": false,
-        "leaveDotGit": false,
-        "commitObject": null
-      },
-      "hash": "sha256-stEG3N0aIUMHoPxFsrtxgUbwno5EcCYD4jNJkwzv/MI="
-    },
-    {
-      "path": "rake-13.4.2.gem",
-      "url": "https://rubygems.org/gems/rake-13.4.2.gem",
-      "mirrors": [],
-      "hash": "sha256-y4JbK9Xx+Okco3vdtLmq80VVG0cx2mKUm+AC+okoNwE="
-    }
-  ],
-  "gems": [
-    {
-      "name": "helper",
-      "version": "1.0.0",
-      "dir": "gems/helper",
-      "gemspec": "gems/helper/helper.gemspec",
-      "executables": []
-    }
-  ],
-  "externalPaths": [
-    "../shared-gem"
-  ],
-  "contentHash": "sha256-QKHmyC4Z+HRmWv/9cfIeiQmtT2+tO2p1MmiRo4BOKR4="
+  "ruby": "3.4.11",
+  "bundlerHash": "sha256-olZ1/70FWuEYZ2bMHhILTPYliOiKu1m5nFfiKxxVyes=",
+  "gemHashes": {
+    "msgpack-1.8.7.gem": "sha256-3+/sdhtfkEfm6NldLH+K9LNyXZhKAZQq3FM6qBmi3zM=",
+    "nokogiri-1.19.4-aarch64-linux-gnu.gem": "sha256-Emn7ZEpt5AUFelPdXHYrEgm0PKdCT4OUVNPbxnfDGo8=",
+    "nokogiri-1.19.4-aarch64-linux-musl.gem": "sha256-NcZbnOcrO7AyB72+cGeRUBncGMG5tZE5aEvWaQ/dAa8=",
+    "nokogiri-1.19.4-arm-linux-gnu.gem": "sha256-owExPji7Bl1oI555c0vNb1b7bvqs694p6avypHNTQMo=",
+    "nokogiri-1.19.4-arm-linux-musl.gem": "sha256-WIkjwQG8+niGlzTSR9JbWYZ0Mj5/IkdPxGj25WRzEes=",
+    "nokogiri-1.19.4-arm64-darwin.gem": "sha256-pG25hTKG5ll7NuvGlTgX0VrPOimVg+s/if3G+R3WNSc=",
+    "nokogiri-1.19.4-x86_64-darwin.gem": "sha256-f9FwV9Ph8A6ZVKdLPNdlldPUpe8jO37ZWZBHwgT3BVE=",
+    "nokogiri-1.19.4-x86_64-linux-gnu.gem": "sha256-N5+uRAsokV4/GddSzi3PhGXtKy++/Sp8oN1Je8mBoGo=",
+    "nokogiri-1.19.4-x86_64-linux-musl.gem": "sha256-F9+3wfoZSuAvv3xRp6/I0ngEWrP9rP2G+R0C17J0Rws=",
+    "racc-1.8.1.gem": "sha256-Sn9pKWkdvsi1IJoLNzvCYUiCtV/F0uRHohqqaRMD1i8=",
+    "rake-13.4.2.gem": "sha256-y4JbK9Xx+Okco3vdtLmq80VVG0cx2mKUm+AC+okoNwE="
+  },
+  "gitHashes": {
+    "accffb58fb0dedd17d68f484031a571fd905acb3": "sha256-stEG3N0aIUMHoPxFsrtxgUbwno5EcCYD4jNJkwzv/MI="
+  },
+  "contentHash": "sha256-lfDbIH+yupznodAA+1BGY/NYU5mgd3PhUvjId82a79Q="
 }

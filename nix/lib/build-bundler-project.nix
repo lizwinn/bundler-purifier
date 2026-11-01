@@ -1,68 +1,70 @@
 # SPDX-License-Identifier: MIT
 #
 # buildBundlerProject: the sandboxed builds of a Bundler project, from the
-# lockfile `bundler-purifier lock` writes at the project root.
+# lockfile `bundler-purifier lock` writes. The flake publishes it in its
+# library as `lib.bundler-purifier.buildBundlerProject`:
 #
-# The file is a package for callPackage: the first argument set is what it
-# takes from the package set, and the result is the builder. The
-# bundler-purifier overlay (`overlays.default`) adds it to the package set
-# as `buildBundlerProject`, so a package written for callPackage takes it
-# like any other dependency:
+#   (lib.bundler-purifier.buildBundlerProject { inherit pkgs; src = ./.; }).packages.app
 #
-#   { buildBundlerProject }: (buildBundlerProject { src = ./.; }).app
+# The builder returns the attributes of the nix-purifiers contract:
 #
-# and `buildBundlerProject.override` replaces what it takes from the set.
-# The builder returns
-#
-#   gemCache          the gem cache of every locked gem and git source, as
-#                     Bundler's `vendor/cache` holds them
-#   app               the project with its bundle installed in deployment
+#   packages.app      the project with its bundle installed in deployment
 #                     mode under vendor/bundle; with external path
 #                     sources, the project is at `app.projectDir` inside
 #                     it, beside those sources
-#   bundle            `bin/bundle` for the app: the locked Bundler on the
+#   packages.bundle   `bin/bundle` for the app: the locked Bundler on the
 #                     app's Gemfile, so `bundle exec` runs the app
-#   packages.<name>   the gem file built from each gemspec of the project,
-#                     at <name>-<version>.gem; `gemFile` names it
+#   packages.<gem>    the gem file built from each gemspec of the project,
+#                     at <gem>-<version>.gem; `gemFile` names it
+#   tests             the `app` build with `checkCommand` run after the
+#                     install
+#   release           what `bundler-purifier publish` pushes: the gem file
+#                     of the project's gemspec, or all of them
+#   fetches           the download entries of the lock, as the shared
+#                     nix-purifiers library reads them
+#
+# and these of its own:
+#
 #   executables.<name>
-#                     each executable those gemspecs declare, as
-#                     `bin/<name>` running it with the app's bundle
+#                     each executable the gemspecs declare, as `bin/<name>`
+#                     running it with the app's bundle
 #   devShell          a shell with the Ruby and libraries of the `app`
-#                     build, for `bundler-purifier install`
+#                     build, which `bundler-purifier prefetch` keeps
+#   gemCache          the gem cache of every locked download, as Bundler's
+#                     `vendor/cache` holds it
 #
 # The lock names every one of these outputs, so Nix knows them when it
 # evaluates, without building anything.
 {
   lib,
-  stdenv,
-  callPackage,
-  gitMinimal,
-  writeShellScriptBin,
-  pkgs,
-  # The `purifier` namespace of the shared nix-purifiers library, which
-  # fetches the locked downloads. The bundler-purifier overlay passes it.
+  # The `purifier` namespace of the shared nix-purifiers library.
   purifier,
 }:
 {
-  # The root of the Bundler project, where Gemfile and Gemfile.lock are.
+  # The package set the builds use.
+  pkgs,
+  # The root of the Bundler project, where the Gemfile is.
   src,
-  # The lockfile; the default is the one `bundler-purifier lock` writes at
-  # the project root.
+  # The lockfile that `bundler-purifier lock` writes. It may lie outside
+  # `src`, kept by the flake that calls the builder; a lockFile outside
+  # `src` takes the place of any copy in it.
   lockFile ? src + "/bundler-purifier.lock.json",
-  # The name of `app`.
+  # The project's Gemfile.lock, when `src` has none of its own; it takes the
+  # place of any copy in `src`.
+  gemfileLock ? null,
+  # Fetchers in place of nixpkgs' fetchers, passed to the shared library's
+  # fetchEntry: `fetchurl` for a gem server that needs credentials or a
+  # mirror, `fetchgit` for a private git repository.
+  fetchers ? { },
+  # The name of `packages.app`.
   name ? "bundler-app",
   # The Ruby that runs Bundler. The default is nixpkgs' Ruby of the minor
   # version the lock was made with.
   ruby ? null,
-  # Replaces nixpkgs' fetchurl for gem files, as for a gem server that
-  # needs credentials. It is called with { name, urls, hash }.
-  fetchurl ? null,
-  # Replaces nixpkgs' fetchgit for git sources, as for a private repository
-  # that needs credentials. It is called with the arguments of fetchgit.
-  fetchgit ? null,
   # Build tools and libraries for gems with native extensions, which
   # compile in the `app` build, beyond the ones nixpkgs names for them
-  # (`useGemConfig`).
+  # (`useGemConfig`). The libraries are on LD_LIBRARY_PATH in the shell
+  # and the `bundle` wrapper, for gems that open one through FFI.
   nativeBuildInputs ? [ ],
   buildInputs ? [ ],
   # Adds the build inputs that nixpkgs' gem configuration
@@ -71,8 +73,7 @@
   useGemConfig ? true,
   # Bundler groups that `app` leaves out, as `bundle config set without`.
   without ? [ ],
-  # Runs `checkCommand` in the `app` build after the install.
-  doCheck ? false,
+  # The test run of `tests`.
   checkCommand ? "bundle exec rake",
   # Filters the project root before it is copied into the store, as the
   # `filter` of builtins.path. The default leaves out version control,
@@ -84,7 +85,42 @@
   externalPaths ? { },
 }:
 let
-  lock = import ./lock.nix { inherit lockFile; };
+  inherit (pkgs) stdenv gitMinimal writeShellScriptBin;
+
+  # A file of the project, read without copying the whole project into the
+  # store first.
+  srcFile = rel: if builtins.isPath src then src + "/${rel}" else "${src}/${rel}";
+
+  gemfileLockPath = if gemfileLock != null then gemfileLock else srcFile "Gemfile.lock";
+  lock = import ./lock.nix {
+    inherit lib lockFile;
+    gemfileLockText =
+      if builtins.pathExists gemfileLockPath then
+        builtins.readFile gemfileLockPath
+      else
+        throw "bundler-purifier: the project has no Gemfile.lock; run `bundler-purifier lock` in the project root, or pass `gemfileLock`.";
+  };
+  lockName = baseNameOf (toString lockFile);
+
+  # The gemspec of a gem of the project: <name>.gemspec in its directory, or
+  # the directory's only gemspec.
+  gemspecOf =
+    gem:
+    let
+      inDir = lib.attrNames (
+        lib.filterAttrs (n: type: type != "directory" && lib.hasSuffix ".gemspec" n) (
+          builtins.readDir (srcFile gem.dir)
+        )
+      );
+      file =
+        if lib.elem "${gem.name}.gemspec" inDir then
+          "${gem.name}.gemspec"
+        else if lib.length inDir == 1 then
+          lib.head inDir
+        else
+          throw "bundler-purifier: ${gem.dir} has no gemspec named ${gem.name}.gemspec.";
+    in
+    if gem.dir == "." then file else "${gem.dir}/${file}";
 
   # The build lays the project and its external path sources out at the
   # same relative positions as in the checkout: the project goes below as
@@ -118,11 +154,12 @@ let
     cd "$tree/${projectDir}"
   '';
 
-  # Version control, Bundler's local state and installs, and the results of
-  # nix build never take part in a build. The project's .bundle/config
-  # does, since it holds settings such as compile flags for native
-  # extensions (BUNDLE_BUILD__<gem>). vendor/cache is the gem cache this
-  # builder supplies itself.
+  # Version control, Bundler's local state and installs, the purifier
+  # lockfile (the build reads `lockFile`) and the results of nix build never
+  # take part in a build. The project's .bundle/config does, since it holds
+  # settings such as compile flags for native extensions
+  # (BUNDLE_BUILD__<gem>). vendor/cache is the gem cache this builder
+  # supplies itself.
   defaultSrcFilter =
     path: type:
     let
@@ -134,12 +171,21 @@ let
       || (lib.hasPrefix ".bundle/" rel && rel != ".bundle/config")
       || rel == "vendor/bundle"
       || rel == "vendor/cache"
+      || rel == "bundler-purifier.lock.json"
       || lib.hasPrefix "result" base
     );
 
-  # A file of the project, read without copying the whole project into the
-  # store first.
-  srcFile = rel: if builtins.isPath src then src + "/${rel}" else "${src}/${rel}";
+  filteredSrc = builtins.path {
+    path = src;
+    name = "bundler-source";
+    filter = if srcFilter != null then srcFilter else defaultSrcFilter;
+  };
+
+  # The source as the builds see it: with `gemfileLock` in place of any
+  # Gemfile.lock of `src`.
+  prepareSource = lib.optionalString (gemfileLock != null) ''
+    cp --no-preserve=mode ${gemfileLock} Gemfile.lock
+  '';
 
   # The definition hash of the project as it is now, computed as
   # `bundler-purifier lock` computes it (see definition_hash there): the
@@ -163,17 +209,29 @@ let
           [ ]
       ) (builtins.readDir dir)
     );
+  gemfileLockFile =
+    if gemfileLock != null then
+      [
+        {
+          rel = "Gemfile.lock";
+          file = gemfileLock;
+        }
+      ]
+    else if builtins.pathExists (srcFile "Gemfile.lock") then
+      [
+        {
+          rel = "Gemfile.lock";
+          file = srcFile "Gemfile.lock";
+        }
+      ]
+    else
+      [ ];
   definitionFiles =
-    map
-      (rel: {
-        inherit rel;
-        file = srcFile rel;
-      })
-      (
-        [ "Gemfile" ]
-        ++ lib.optional (builtins.pathExists (srcFile "Gemfile.lock")) "Gemfile.lock"
-        ++ gemspecsIn (srcFile "") ""
-      )
+    map (rel: {
+      inherit rel;
+      file = srcFile rel;
+    }) ([ "Gemfile" ] ++ gemspecsIn (srcFile "") "")
+    ++ gemfileLockFile
     ++ lib.concatMap (
       p:
       map
@@ -204,13 +262,7 @@ let
   };
   definitionCurrent =
     definitionHash == lock.definitionHash
-    || throw "bundler-purifier: the Gemfile, Gemfile.lock or a gemspec changed since ${baseNameOf (toString lockFile)} was made. Run `bundler-purifier lock` in the project root.";
-
-  filteredSrc = builtins.path {
-    path = src;
-    name = "bundler-source";
-    filter = if srcFilter != null then srcFilter else defaultSrcFilter;
-  };
+    || throw "bundler-purifier: the Gemfile, Gemfile.lock or a gemspec changed since ${lockName} was made. Run `bundler-purifier lock` in the project root.";
 
   rubyVersion = lib.versions.splitVersion lock.ruby;
   rubyAttr = "ruby_${builtins.elemAt rubyVersion 0}_${builtins.elemAt rubyVersion 1}";
@@ -221,13 +273,15 @@ let
       pkgs.${rubyAttr}
         or (throw "bundler-purifier: nixpkgs has no ${rubyAttr} for the Ruby ${lock.ruby} the lock was made with; pass `ruby`.");
 
-  gemCache = callPackage ./gem-cache.nix (
-    {
-      inherit lockFile purifier;
-    }
-    // lib.optionalAttrs (fetchurl != null) { inherit fetchurl; }
-    // lib.optionalAttrs (fetchgit != null) { inherit fetchgit; }
-  );
+  gemCache = import ./gem-cache.nix {
+    inherit
+      lib
+      pkgs
+      purifier
+      lock
+      fetchers
+      ;
+  };
 
   # The environment shared by every build. Bundler's own configuration
   # goes to .bundle/config in the build directory, which `app` keeps.
@@ -328,11 +382,11 @@ let
         gitMinimal
       ]
       ++ nativeBuildInputs;
-      buildInputs = buildInputs ++ lib.optionals useGemConfig (lib.unique gemConfigInputs);
-      inherit doCheck;
+      buildInputs = runtimeInputs;
       dontConfigure = true;
       buildPhase = ''
         runHook preBuild
+        ${prepareSource}
         ${lib.optionalString hasExternal placeExternalPaths}
         ${lib.optionalString usesGemspecs ''
           # The repository covers the external path sources too, which sit
@@ -401,7 +455,7 @@ let
     exec ruby "$GEM_HOME/bin/bundle" "$@"
   '';
 
-  mkPackage =
+  mkGem =
     gem:
     let
       fileName = "${gem.name}-${gem.version}.gem";
@@ -421,9 +475,10 @@ let
             runHook preBuild
             export HOME="$TMPDIR/home"
             mkdir -p "$HOME"
+            ${prepareSource}
             ${gitRepositoryForGemspecs}
             cd ${lib.escapeShellArg gem.dir}
-            gem build ${lib.escapeShellArg (baseNameOf gem.gemspec)} --output ${lib.escapeShellArg fileName}
+            gem build ${lib.escapeShellArg (baseNameOf (gemspecOf gem))} --output ${lib.escapeShellArg fileName}
             runHook postBuild
           '';
           installPhase = ''
@@ -438,22 +493,39 @@ let
         };
     in
     package;
+
+  gems = lib.mapAttrs (_: mkGem) lock.gemsByName;
+  clashes = lib.filter (n: gems ? ${n}) [
+    "app"
+    "bundle"
+  ];
 in
+assert
+  clashes == [ ]
+  || throw "bundler-purifier: a gemspec of the project builds a gem named ${lib.head clashes}, which clashes with packages.${lib.head clashes}.";
 {
-  inherit gemCache app bundle;
-  # A shell with the Ruby, git, build tools and libraries of the `app`
-  # build, for `bundler-purifier install` and day-to-day work: native
-  # extensions compile in it as they do in the sandbox.
-  devShell = pkgs.mkShell {
-    packages = [
-      ruby'
-      gitMinimal
-    ]
-    ++ nativeBuildInputs
-    ++ runtimeInputs;
-    LD_LIBRARY_PATH = runtimeLibraryPath;
+  packages = gems // {
+    inherit app bundle;
   };
-  packages = lib.mapAttrs (_: mkPackage) lock.gemsByName;
+
+  tests = app.overrideAttrs (_: {
+    name = "${name}-tests";
+    doCheck = true;
+  });
+
+  release =
+    if lib.length (lib.attrNames gems) == 1 then
+      lib.head (lib.attrValues gems)
+    else if gems != { } then
+      pkgs.symlinkJoin {
+        name = "${name}-release";
+        paths = lib.attrValues gems;
+      }
+    else
+      throw "bundler-purifier: the project has no gemspec, so it has no release for `bundler-purifier publish` to push.";
+
+  fetches = lock.downloads;
+
   # Each executable that a gemspec of the project declares, run with the
   # app's bundle: `bin/<name>`.
   executables = lib.listToAttrs (
@@ -467,4 +539,19 @@ in
       }) gem.executables
     ) lock.gems
   );
+
+  # A shell with the Ruby, git, build tools and libraries of the `app`
+  # build, for day-to-day work: native extensions compile in it as they do
+  # in the sandbox, and gems that open a library through FFI find it.
+  devShell = pkgs.mkShell {
+    packages = [
+      ruby'
+      gitMinimal
+    ]
+    ++ nativeBuildInputs
+    ++ runtimeInputs;
+    LD_LIBRARY_PATH = runtimeLibraryPath;
+  };
+
+  inherit gemCache;
 }

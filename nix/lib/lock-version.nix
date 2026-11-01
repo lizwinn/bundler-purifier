@@ -2,4 +2,4 @@
 #
 # The lock format version this library reads and `bundler-purifier lock`
 # writes.
-2
+3
