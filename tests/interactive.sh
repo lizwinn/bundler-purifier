@@ -3,8 +3,7 @@
 #
 # The tests of what runs outside the Nix sandbox, which `nix flake check`
 # cannot run: the lock run, `install` and `push`. CI runs this after the
-# flake's checks. It needs nix, the network and a C compiler, and it runs
-# from the repository root.
+# flake's checks. It needs nix and the network.
 #
 # 1. The lock run of each fixture writes the committed lockfiles again.
 # 2. `install` installs the app fixture from the locked gems, and the app
@@ -13,7 +12,8 @@
 #    file, which tests/fake-gem-server.rb receives in place of a gem host.
 set -euo pipefail
 
-repo=$(pwd)
+repo=$(cd "$(dirname "$0")/.." && pwd)
+cd "$repo"
 cli="$(nix build --no-link --print-out-paths '.#cli')/bin/bundler-purifier"
 # The Ruby the CLI runs on comes first on PATH, so `install` and `push` use
 # it rather than a Ruby the machine has.

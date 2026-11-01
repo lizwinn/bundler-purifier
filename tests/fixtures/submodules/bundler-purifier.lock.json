@@ -94,7 +94,9 @@
       "git": {
         "url": "https://github.com/sass/sassc-ruby",
         "rev": "ceed730adef7e6cacd0167c6a3ba4109f67a3ff8",
-        "submodules": true
+        "submodules": true,
+        "leaveDotGit": false,
+        "commitObject": null
       },
       "hash": "sha256-f8iwCsjwuqC1cZSr5do1uyNmeuLUQvDMThB1snUjtYg="
     }

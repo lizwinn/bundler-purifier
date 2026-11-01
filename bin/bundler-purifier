@@ -166,7 +166,15 @@ module BundlerPurifier
           dirs = Dir.glob("*-#{source.revision[0, 12]}", base: cache).select { |d| File.directory?(File.join(cache, d)) }
           fail!("bundle cache did not write the git source #{source.uri} at #{source.revision}") unless dirs.size == 1
           next if downloads.key?(dirs.first)
-          git = { "url" => https_git_url(source.uri), "rev" => source.revision, "submodules" => source.options["submodules"] ? true : false }
+          # Bundler needs no .git in a cached checkout, so the entry asks
+          # for none and carries no commit object.
+          git = {
+            "url" => https_git_url(source.uri),
+            "rev" => source.revision,
+            "submodules" => source.options["submodules"] ? true : false,
+            "leaveDotGit" => false,
+            "commitObject" => nil,
+          }
           downloads[dirs.first] = { "path" => dirs.first, "git" => git, "hash" => git_nar_hash(git) }
         when Bundler::Source::Path
           dir = File.expand_path(source.path.to_s, root)

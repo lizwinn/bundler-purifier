@@ -85,7 +85,9 @@
       "git": {
         "url": "https://github.com/ku1ik/rainbow",
         "rev": "accffb58fb0dedd17d68f484031a571fd905acb3",
-        "submodules": false
+        "submodules": false,
+        "leaveDotGit": false,
+        "commitObject": null
       },
       "hash": "sha256-stEG3N0aIUMHoPxFsrtxgUbwno5EcCYD4jNJkwzv/MI="
     },
