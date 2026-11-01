@@ -18,7 +18,11 @@ cli="$(nix build --no-link --print-out-paths '.#cli')/bin/bundler-purifier"
 # The Ruby the CLI runs on comes first on PATH, so `install` and `push` use
 # it rather than a Ruby the machine has.
 ruby=$(grep -o '/nix/store/[^"]*-ruby-[^/"]*/bin' "$cli" | head -n 1)
-export PATH="$ruby:$PATH"
+nixpkgs=$(grep -o "BUNDLER_PURIFIER_NIXPKGS='[^']*'" "$cli" | cut -d"'" -f2)
+# Native extensions compile against that Ruby, which only nixpkgs' C
+# toolchain links with; a machine's own compiler does not.
+toolchain=$(nix-build "$nixpkgs" -A stdenv.cc -A gnumake --no-out-link | sed 's|$|/bin|' | paste -sd:)
+export PATH="$ruby:$toolchain:$PATH"
 work=$(mktemp -d)
 trap 'kill "${server:-}" 2>/dev/null || true; rm -rf "$work"' EXIT
 export BUNDLE_USER_HOME="$work/bundle-home"
@@ -51,7 +55,7 @@ for _ in $(seq 50); do [[ -s "$work/port" ]] && break; sleep 0.1; done
 (cd "$work/fixtures/library" &&
   GEM_HOST_API_KEY=fake-key "$cli" push greeting --host "http://127.0.0.1:$(cat "$work/port")")
 built=$(nix-build --no-out-link --expr "
-  let pkgs = import $(grep -o "BUNDLER_PURIFIER_NIXPKGS='[^']*'" "$cli" | cut -d"'" -f2) { };
+  let pkgs = import $nixpkgs { };
   in ((pkgs.callPackage $repo/nix/lib/build-bundler-project.nix { }) {
     src = $work/fixtures/library;
   }).packages.greeting")

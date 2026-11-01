@@ -17,7 +17,10 @@ bundler-purifier is part of [nix-purifiers](https://nix-purifiers.github.io).
   adds to a package set, turns a project and its lockfile into derivations.
   `app` is the project with its bundle installed in deployment mode, and
   `bundle` runs it. `packages.<gem>` is the gem file that a gemspec of the
-  project builds.
+  project builds, and `executables.<name>` runs each executable those
+  gemspecs declare. The lockfile names every one of these outputs, so Nix
+  knows them when it evaluates the flake, without building anything and
+  without generated Nix files.
 - **Offline installs during development.** `bundler-purifier install` runs
   `bundle install --local` against the locked files, which Nix fetches.
 - **Publishing what Nix built.** `bundler-purifier push <gem>` builds the gem
@@ -112,8 +115,10 @@ outside the project, and `srcFilter`.
 Every kind of source a `Gemfile.lock` can name works:
 
 - **Gem servers** (`source "https://…"`): each gem file, for every platform
-  in `Gemfile.lock`. A server that needs credentials takes them through the
-  builder's `fetchurl` argument.
+  in `Gemfile.lock`. When Bundler is configured with a mirror for the
+  source (`bundle config mirror.https://rubygems.org <mirror>`), the lock
+  records the mirror's URL as a fallback for each file. A server that
+  needs credentials takes them through the builder's `fetchurl` argument.
 - **Git** (`git:`, `github:`), with `submodules: true` too. The Nix sandbox
   has no SSH keys, so a source over SSH (`git@host:owner/repo` or
   `ssh://host/owner/repo`) is locked at the HTTPS URL of the same host

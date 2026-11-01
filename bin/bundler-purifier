@@ -160,7 +160,8 @@ module BundlerPurifier
           path = File.join(cache, file)
           fail!("bundle cache did not write #{file}") unless File.file?(path)
           hash = sri(path)
-          downloads[file] = { "path" => file, "url" => gem_url(source.remotes, file, hash), "hash" => hash }
+          url = gem_url(source.remotes, file, hash)
+          downloads[file] = { "path" => file, "url" => url, "mirrors" => mirrors_for(url), "hash" => hash }
         when Bundler::Source::Git
           dirs = Dir.glob("*-#{source.revision[0, 12]}", base: cache).select { |d| File.directory?(File.join(cache, d)) }
           fail!("bundle cache did not write the git source #{source.uri} at #{source.revision}") unless dirs.size == 1
@@ -176,11 +177,13 @@ module BundlerPurifier
           rel = dir == root ? "." : dir.delete_prefix("#{root}/")
           gemspec = Dir.glob("#{spec.name}.gemspec", base: dir).first || Dir.glob("*.gemspec", base: dir).first
           next unless gemspec
+          loaded = Bundler.load_gemspec(File.join(dir, gemspec))
           gems << {
             "name" => spec.name,
             "version" => spec.version.to_s,
             "dir" => rel,
             "gemspec" => rel == "." ? gemspec : "#{rel}/#{gemspec}",
+            "executables" => loaded.executables.sort,
           }
         end
       end
@@ -251,7 +254,20 @@ module BundlerPurifier
     run!(env, "gem", "fetch", "bundler", "--version", version, "--source", "https://rubygems.org/", chdir: fetched)
     path = File.join(fetched, file)
     fail!("gem fetch did not write #{file}") unless File.file?(path)
-    { "path" => file, "url" => "https://rubygems.org/gems/#{file}", "hash" => sri(path) }
+    url = "https://rubygems.org/gems/#{file}"
+    { "path" => file, "url" => url, "mirrors" => mirrors_for(url), "hash" => sri(path) }
+  end
+
+  # Other URLs of a gem file: the mirror that Bundler's configuration
+  # (`bundle config mirror.<source> <mirror>`, from the user's global
+  # configuration, the project's .bundle/config or the environment) gives
+  # its source, when there is one.
+  def mirrors_for(url)
+    @bundler_settings ||= Bundler::Settings.new(File.join(root, ".bundle"))
+    source = url[%r{\A.*/(?=gems/[^/]+\z)}]
+    mirror = @bundler_settings.mirror_for(source).to_s
+    mirror = "#{mirror}/" unless mirror.end_with?("/")
+    mirror == source ? [] : ["#{mirror}#{url.delete_prefix(source)}"]
   end
 
   def check_platforms(parser)

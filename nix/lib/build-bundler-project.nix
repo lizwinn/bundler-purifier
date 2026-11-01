@@ -24,6 +24,12 @@
 #                     app's Gemfile, so `bundle exec` runs the app
 #   packages.<name>   the gem file built from each gemspec of the project,
 #                     at <name>-<version>.gem; `gemFile` names it
+#   executables.<name>
+#                     each executable those gemspecs declare, as
+#                     `bin/<name>` running it with the app's bundle
+#
+# The lock names every one of these outputs, so Nix knows them when it
+# evaluates, without building anything.
 {
   lib,
   stdenv,
@@ -43,7 +49,8 @@
   # The Ruby that runs Bundler. The default is nixpkgs' Ruby of the minor
   # version the lock was made with.
   ruby ? null,
-  # Replaces the built-in fetcher for gem files; see fetch.nix.
+  # Replaces nixpkgs' fetchurl for gem files, as for a gem server that
+  # needs credentials. It is called with { name, urls, hash }.
   fetchurl ? null,
   # Replaces nixpkgs' fetchgit for git sources, as for a private repository
   # that needs credentials. It is called with the arguments of fetchgit.
@@ -134,7 +141,11 @@ let
         or (throw "bundler-purifier: nixpkgs has no ${rubyAttr} for the Ruby ${lock.ruby} the lock was made with; pass `ruby`.");
 
   gemCache = callPackage ./gem-cache.nix (
-    { inherit lockFile fetchurl; } // lib.optionalAttrs (fetchgit != null) { inherit fetchgit; }
+    {
+      inherit lockFile;
+    }
+    // lib.optionalAttrs (fetchurl != null) { inherit fetchurl; }
+    // lib.optionalAttrs (fetchgit != null) { inherit fetchgit; }
   );
 
   # The environment shared by every build. Bundler's own configuration
@@ -308,4 +319,17 @@ in
 {
   inherit gemCache app bundle;
   packages = lib.mapAttrs (_: mkPackage) lock.gemsByName;
+  # Each executable that a gemspec of the project declares, run with the
+  # app's bundle: `bin/<name>`.
+  executables = lib.listToAttrs (
+    lib.concatMap (
+      gem:
+      map (executable: {
+        name = executable;
+        value = writeShellScriptBin executable ''
+          exec ${bundle}/bin/bundle exec ${lib.escapeShellArg executable} "$@"
+        '';
+      }) gem.executables
+    ) lock.gems
+  );
 }

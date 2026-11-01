@@ -9,6 +9,8 @@ Gem::Specification.new do |spec|
   spec.required_ruby_version = ">= 3.1"
   # The usual way of listing a gem's files, which the Nix build supports
   # by putting the source in a git repository.
-  spec.files = `git ls-files -z`.split("\x0").select { |f| f.start_with?("lib/") }
+  spec.files = `git ls-files -z`.split("\x0").select { |f| f.start_with?("lib/", "exe/") }
+  spec.bindir = "exe"
+  spec.executables = ["greet"]
   spec.add_dependency "rainbow", "~> 3.1"
 end

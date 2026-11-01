@@ -77,6 +77,24 @@ in
   # extension compiles libsass from the submodule's checkout.
   fixture-submodules = runsMain "fixture-submodules-runs" submodules ".purified{width:3px}";
 
+  # The executable that the library's gemspec declares, which the lock
+  # names, runs with the library's bundle.
+  fixture-library-executable =
+    purified.runCommand "fixture-library-executable"
+      {
+        nativeBuildInputs = [ library.executables.greet ];
+      }
+      ''
+        export HOME="$TMPDIR"
+        output=$(greet nix)
+        echo "$output"
+        case "$output" in
+          *"hello, nix"*) ;;
+          *) echo "unexpected output from greet" >&2; exit 1 ;;
+        esac
+        touch "$out"
+      '';
+
   # The library's `app` build runs its tests; its package is the gem file
   # its gemspec builds, with the files `git ls-files` lists.
   fixture-library =
@@ -93,6 +111,7 @@ in
         echo "$files"
         echo "$files" | grep -q lib/greeting.rb
         echo "$files" | grep -q lib/greeting/version.rb
+        echo "$files" | grep -q exe/greet
         touch "$out"
       '';
 }

@@ -8,14 +8,13 @@
 {
   lib,
   runCommand,
+  fetchurl,
   fetchgit,
   lockFile,
-  # Replaces the built-in fetcher for files; see fetch.nix.
-  fetchurl ? null,
 }:
 let
   lock = import ./lock.nix { inherit lockFile; };
-  fetch = import ./fetch.nix { inherit lock fetchgit fetchurl; };
+  fetch = import ./fetch.nix { inherit lock fetchurl fetchgit; };
 in
 # The manifests go to the builder as files, since a large bundle locks
 # hundreds of gems and the list would not fit in an environment variable.
