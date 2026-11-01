@@ -30,18 +30,35 @@ platform in `Gemfile.lock`; `lock` warns when there is none, and
 Bundler 4), `Gemfile.lock` records every gem's hash, and the purifier
 lockfile shrinks to a few fields.
 
-The flake's `overlays.default` adds one attribute to a package set, the
-scope `bundler-purifier`. The scope holds the builder
-`buildBundlerProject` and the command `cli`. A package written for
-`callPackage` takes the scope by name:
+Then build the project from its directory, with no Nix file added to it:
 
-```nix
-# package.nix
-{ bundler-purifier }:
-(bundler-purifier.buildBundlerProject { src = ./.; }).packages.app
+```zsh
+nix build --impure --expr '
+  let
+    purifier = builtins.getFlake "github:nix-purifiers/bundler-purifier";
+    pkgs = import purifier.inputs.nixpkgs {
+      system = builtins.currentSystem;
+      overlays = [ purifier.overlays.default ];
+    };
+  in
+  (pkgs.bundler-purifier.buildBundlerProject { src = ./.; }).packages.app'
 ```
 
-A flake that builds the project applies the overlay to its nixpkgs:
+This uses the purifier's pinned nixpkgs, matching the lock command above.
+To build with ambient `<nixpkgs>` from your Nix search path instead,
+replace `import purifier.inputs.nixpkgs` with `import <nixpkgs>`.
+Both forms need no Nix files in your project. The build tool and language
+versions must match the lockfile; with ambient nixpkgs, lock with the
+purifier from that package set or pass a compatible toolchain to the builder.
+
+`result` is the app with its bundle installed. The flake's
+`overlays.default` adds one attribute to a package set, the scope
+`bundler-purifier`, which holds the builder `buildBundlerProject` and the
+command `cli`.
+
+A project whose authors want a flake can package itself with one. The flake
+calls the builder directly, and it can live in the project's repository or
+in another one:
 
 ```nix
 {
@@ -65,9 +82,9 @@ A flake that builds the project applies the overlay to its nixpkgs:
 }
 ```
 
-`nix build '.#app'` builds the app with its bundle installed.
-`nix shell '.#bundle' -c bundle exec ruby main.rb`, run in the app's store
-path, runs it. The builder's result has the attributes of the contract:
+`nix build '.#app'` builds the app, and `nix shell '.#bundle' -c bundle
+exec ruby main.rb`, run in the app's store path, runs it. The builder's
+result has the attributes of the contract:
 
 - `packages.app`, the project with its bundle installed in deployment mode,
   and `packages.bundle`, the locked Bundler on the app's Gemfile.
@@ -272,38 +289,28 @@ nix run github:nix-purifiers/bundler-purifier -- lock
 
 The lock run builds nixpkgs' Ruby of the version Lobsters asks for.
 Lobsters' `Gemfile.lock` has a `CHECKSUMS` section, so
-`bundler-purifier.lock.json` holds only a few fields. A flake beside it
-builds the app. Lobsters' image processing loads libvips through FFI, so
-the flake passes it in `buildInputs`:
+`bundler-purifier.lock.json` holds only a few fields. Lobsters' image
+processing loads libvips through FFI, so the build passes libvips in
+`buildInputs`. From the same directory:
 
-```nix
-{
-  inputs.bundler-purifier.url = "github:nix-purifiers/bundler-purifier";
-  inputs.nixpkgs.follows = "bundler-purifier/nixpkgs";
-
-  outputs = { nixpkgs, bundler-purifier, ... }:
-    let
-      system = "x86_64-linux";
-      pkgs = import nixpkgs {
-        inherit system;
-        overlays = [ bundler-purifier.overlays.default ];
-      };
-      lobsters = pkgs.bundler-purifier.buildBundlerProject {
-        src = ./.;
-        name = "lobsters";
-        buildInputs = [ pkgs.vips ];
-      };
-    in
-    {
-      packages.${system} = lobsters.packages;
-      devShells.${system}.default = lobsters.devShell;
+```zsh
+nix build --impure --expr '
+  let
+    purifier = builtins.getFlake "github:nix-purifiers/bundler-purifier";
+    pkgs = import purifier.inputs.nixpkgs {
+      system = builtins.currentSystem;
+      overlays = [ purifier.overlays.default ];
     };
-}
+  in
+  (pkgs.bundler-purifier.buildBundlerProject {
+    src = ./.;
+    name = "lobsters";
+    buildInputs = [ pkgs.vips ];
+  }).packages.app'
 ```
 
-`nix build '.#app'` builds Lobsters with its bundle, and
-`nix shell '.#bundle' -c bundle exec rails --version`, run in the app's
-store path, starts Rails from it. For day-to-day work on Lobsters:
+`result` is Lobsters with its bundle installed. For day-to-day work on
+Lobsters:
 
 ```zsh
 nix run github:nix-purifiers/bundler-purifier -- prefetch
@@ -313,11 +320,9 @@ RAILS_ENV=test bundle exec rails db:create db:schema:load
 bundle exec rspec
 ```
 
-To build Lobsters without adding files to its tree, keep the flake and
-`bundler-purifier.lock.json` in a separate repository, take Lobsters as a
-flake input with `flake = false`, and pass its source as `src` and the
-lockfile as `lockFile`. Lock it from the checkout with
-`bundler-purifier --lockfile <path> lock`.
+To keep `bundler-purifier.lock.json` out of the Lobsters checkout, write
+it elsewhere with `bundler-purifier --lockfile <path> lock` and pass the
+same path to the builder as `lockFile`.
 
 ## Credits
 
