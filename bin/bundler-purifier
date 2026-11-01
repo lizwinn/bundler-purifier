@@ -148,12 +148,18 @@ module BundlerPurifier
     BUNDLE_CACHE_PATH BUNDLE_BIN BUNDLE_APP_CONFIG
   ].freeze
 
+  # Bundler reads .bundle/config with its own YAML serializer, which a
+  # general YAML writer's quoting can break, so the file is read and
+  # written with that serializer.
   def write_lock_run_config(dir)
+    require "bundler/yaml_serializer"
     config = {}
     project = File.join(root, ".bundle", "config")
-    config = (YAML.safe_load(File.read(project)) || {}).reject { |k, _| LOCK_RUN_IGNORED_SETTINGS.include?(k) } if File.file?(project)
+    if File.file?(project)
+      config = Bundler::YAMLSerializer.load(File.read(project)).reject { |k, _| LOCK_RUN_IGNORED_SETTINGS.include?(k) }
+    end
     FileUtils.mkdir_p(dir)
-    File.write(File.join(dir, "config"), YAML.dump(config))
+    File.write(File.join(dir, "config"), Bundler::YAMLSerializer.dump(config))
   end
 
   # Runs Bundler in the project with empty gem, user and cache directories,

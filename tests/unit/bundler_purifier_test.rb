@@ -173,16 +173,18 @@ class BundlerPurifierTest < Minitest::Test
   end
 
   def test_lock_run_config_drops_the_settings_that_narrow_the_lock
+    # A value with quotes in it, as Lobsters' sqlite3 flags have.
     write(".bundle/config", <<~YAML)
       ---
       BUNDLE_WITHOUT: "development:test"
       BUNDLE_PATH: "vendor/bundle"
       BUNDLE_DEPLOYMENT: "true"
-      BUNDLE_BUILD__SQLITE3: "--with-flags"
+      BUNDLE_BUILD__SQLITE3: "--with-sqlite-cflags='-DA=0 -DB'"
     YAML
     out = File.join(@dir, "lock-config")
     BP.write_lock_run_config(out)
-    assert_equal({ "BUNDLE_BUILD__SQLITE3" => "--with-flags" }, YAML.safe_load(File.read(File.join(out, "config"))))
+    assert_equal({ "BUNDLE_BUILD__SQLITE3" => "--with-sqlite-cflags='-DA=0 -DB'" },
+                 Bundler::YAMLSerializer.load(File.read(File.join(out, "config"))))
   end
 
   def test_check_platforms_warns_without_a_linux_platform
