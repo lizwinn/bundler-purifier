@@ -49,11 +49,9 @@
   src,
   # The lockfile that `bundler-purifier lock` writes. It may lie outside
   # `src`, kept by the flake that calls the builder; a lockFile outside
-  # `src` takes the place of any copy in it.
+  # `src` takes the place of any copy in it. Gemfile.lock is always the one
+  # in `src`.
   lockFile ? src + "/bundler-purifier.lock.json",
-  # The project's Gemfile.lock, when `src` has none of its own; it takes the
-  # place of any copy in `src`.
-  gemfileLock ? null,
   # Fetchers in place of nixpkgs' fetchers, passed to the shared library's
   # fetchEntry: `fetchurl` for a gem server that needs credentials or a
   # mirror, `fetchgit` for a private git repository.
@@ -99,7 +97,6 @@ let
     inherit
       src
       lockFile
-      gemfileLock
       externalPaths
       ;
   };
@@ -196,12 +193,6 @@ let
     name = "bundler-source";
     filter = if srcFilter != null then srcFilter else defaultSrcFilter;
   };
-
-  # The source as the builds see it: with `gemfileLock` in place of any
-  # Gemfile.lock of `src`.
-  prepareSource = lib.optionalString (gemfileLock != null) ''
-    cp --no-preserve=mode ${gemfileLock} Gemfile.lock
-  '';
 
   rubyVersion = lib.versions.splitVersion (builtins.seq checkedLock lock.ruby);
   rubyAttr = "ruby_${builtins.elemAt rubyVersion 0}_${builtins.elemAt rubyVersion 1}";
@@ -322,7 +313,6 @@ let
       dontConfigure = true;
       buildPhase = ''
         runHook preBuild
-        ${prepareSource}
         ${lib.optionalString hasExternal placeExternalPaths}
         ${lib.optionalString usesGemspecs ''
           # The repository covers the external path sources too, which sit
@@ -410,7 +400,6 @@ let
           runHook preBuild
           export HOME="$TMPDIR/home"
           mkdir -p "$HOME"
-          ${prepareSource}
           ${gitRepositoryForGemspecs}
           cd ${lib.escapeShellArg gem.dir}
           gem build ${lib.escapeShellArg (baseNameOf (gemspecOf gem))} --output ${lib.escapeShellArg fileName}

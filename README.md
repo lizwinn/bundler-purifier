@@ -81,9 +81,10 @@ groups out of `app`. `fetchers` replaces nixpkgs' `fetchurl` or `fetchgit`,
 for a gem server or a git repository that needs credentials, or a mirror.
 `externalPaths` gives the trees of path sources outside the project.
 
-A project that keeps its build outside its tree passes `lockFile`, and
-`gemfileLock` when its tree has no `Gemfile.lock`. The commands then take
-`--lockfile <path>` or `BUNDLER_PURIFIER_LOCKFILE`.
+A project that keeps its build outside its tree keeps the purifier
+lockfile outside it and passes it as `lockFile`; `Gemfile.lock` stays in
+the tree. The commands then take `--lockfile <path>` or
+`BUNDLER_PURIFIER_LOCKFILE`.
 
 ## Everyday loop
 

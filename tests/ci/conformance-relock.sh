@@ -16,9 +16,8 @@ for fixture in app library submodules update; do
 done
 
 echo "== relock of external"
-cp "$work/fixtures/external/Gemfile.lock" "$work/fixtures/external/project/Gemfile.lock"
 (cd "$work/fixtures/external/project" && "$cli" --lockfile ../bundler-purifier.lock.json lock --force)
-diff -u "$repo/tests/fixtures/external/Gemfile.lock" "$work/fixtures/external/project/Gemfile.lock"
+diff -u "$repo/tests/fixtures/external/project/Gemfile.lock" "$work/fixtures/external/project/Gemfile.lock"
 diff -u "$repo/tests/fixtures/external/bundler-purifier.lock.json" \
   "$work/fixtures/external/bundler-purifier.lock.json"
 echo "conformance-relock passed"

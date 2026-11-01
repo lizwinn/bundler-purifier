@@ -45,10 +45,9 @@
 {
   # The root of the Bundler project, where the Gemfile is.
   src,
-  # The purifier lockfile; it may lie outside `src`.
+  # The purifier lockfile; it may lie outside `src`. Gemfile.lock is always
+  # the one in `src`.
   lockFile ? src + "/bundler-purifier.lock.json",
-  # The project's Gemfile.lock, when `src` has none of its own.
-  gemfileLock ? null,
   # The trees of the path sources outside the project, by the path
   # Gemfile.lock gives them.
   externalPaths ? { },
@@ -106,11 +105,11 @@ let
       [ ];
   purifierLock = if lockProblems == [ ] then parsed else { };
 
-  gemfileLockPath = if gemfileLock != null then gemfileLock else srcFile "Gemfile.lock";
+  gemfileLockPath = srcFile "Gemfile.lock";
   hasGemfileLock = builtins.pathExists gemfileLockPath;
   gemfileLockProblems =
     lib.optional (!hasGemfileLock)
-      "bundler-purifier: the project has no Gemfile.lock. Run `bundler-purifier lock` in the project root, or pass `gemfileLock`.";
+      "bundler-purifier: the project has no Gemfile.lock. Run `bundler-purifier lock` in the project root.";
   gemfileLockData = import ./gemfile-lock.nix {
     inherit lib;
     text = if hasGemfileLock then builtins.readFile gemfileLockPath else "";

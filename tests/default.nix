@@ -56,13 +56,12 @@ let
     name = "fixture-submodules";
   };
 
-  # A fixture kept external: its source holds only the Gemfile and main.rb,
-  # and the flake that builds it keeps Gemfile.lock and the purifier
-  # lockfile outside it.
+  # A fixture kept external: its source holds only Bundler's files and
+  # main.rb, and the flake that builds it keeps the purifier lockfile
+  # outside it.
   external = build {
     src = ./fixtures/external/project;
     name = "fixture-external";
-    gemfileLock = ./fixtures/external/Gemfile.lock;
     lockFile = ./fixtures/external/bundler-purifier.lock.json;
   };
 
@@ -92,11 +91,16 @@ let
       };
     };
   damaged = {
-    # The Gemfile.lock changed after the lock was made.
+    # A lock made from another Gemfile.lock: its definition hash differs,
+    # with a contentHash that matches it. The CLI side changes the copied
+    # Gemfile.lock instead.
     stale = {
-      gemfileLock = builtins.toFile "Gemfile.lock" (
-        builtins.readFile ./fixtures/library/Gemfile.lock + "\n"
+      lockFile = builtins.toFile "bundler-purifier.lock.json" (
+        builtins.toJSON (
+          withContentHash (libraryLock // { definitionHash = "sha256-${lib.fixedWidthString 43 "A" ""}="; })
+        )
       );
+      changeProject = "echo >> project/Gemfile.lock";
     };
     # A hash changed by hand.
     tampered = {
@@ -125,7 +129,12 @@ let
     kind: expected:
     let
       args = damaged.${kind};
-      evaluated = builtins.tryEval (build ({ src = ./fixtures/library; } // args)).packages.app.drvPath;
+      evaluated =
+        builtins.tryEval
+          (build {
+            src = ./fixtures/library;
+            inherit (args) lockFile;
+          }).packages.app.drvPath;
     in
     assert
       !evaluated.success || throw "conformance-${kind}: Nix evaluated a build from a ${kind} lockfile";
@@ -137,8 +146,12 @@ let
         export HOME="$TMPDIR" LC_ALL=C.UTF-8
         cp -r ${./fixtures/library} project
         chmod -R u+w project
-        ${lib.optionalString (args ? gemfileLock) "cp ${args.gemfileLock} project/Gemfile.lock"}
-        ${lib.optionalString (args ? lockFile) "cp ${args.lockFile} project/bundler-purifier.lock.json"}
+        ${
+          if args ? changeProject then
+            args.changeProject
+          else
+            "cp ${args.lockFile} project/bundler-purifier.lock.json"
+        }
         cd project
         if output=$(bundler-purifier prefetch 2>&1); then
           echo "conformance-${kind}: the CLI accepted a ${kind} lockfile" >&2
