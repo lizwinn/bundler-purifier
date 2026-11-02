@@ -363,12 +363,8 @@ same path to the builder as `lockFile`.
 
 ## Credits
 
-bundler-purifier follows the design of
-[sbt-nix-backend](https://github.com/nix-purifiers/sbt-purifier): a lock run
-with empty caches that records every download, a builder that runs the
-tool itself in the sandbox from that lockfile, an offline mode on the same
-locked files, and publishing what Nix built. The purifier idea was inspired
-by nixcloud's [cargo (libnix)](https://github.com/nixcloud/cargo).
+The purifier idea was inspired by nixcloud's
+[cargo (libnix)](https://github.com/nixcloud/cargo).
 
 ## License
 
