@@ -12,6 +12,8 @@
 #   bundler-purifier prefetch [ARGS]  realize the locked gems and the dev
 #                                     shell, with GC roots, and install the
 #                                     bundle from them offline
+#   bundler-purifier shell [COMMAND...] enter the project environment, or
+#                                     run a command in it
 #   bundler-purifier publish [ARGS]   push the gems that Nix built
 #
 # The commands run in the project root, where the Gemfile is. The purifier
@@ -563,7 +565,25 @@ module BundlerPurifier
     end
     run!({}, "nix", "develop", shell, "--command", "bundle", "config", "set", "--local", "cache_path", cache, chdir: root)
     run!({}, "nix", "develop", shell, "--command", "bundle", "install", "--local", *args, chdir: root)
-    puts "bundler-purifier: prefetched; work offline with `nix develop #{shell}`"
+    puts "bundler-purifier: prefetched; enter the environment with `bundler-purifier shell`"
+  end
+
+  # The shell definition comes from this package, not a generated project
+  # flake. Evaluate it against the project's current lockfiles; the local
+  # profile only keeps the resulting environment alive through GC.
+  def shell(args)
+    args = args.drop(1) if args.first == "--"
+    unless File.file?(lockfile_path)
+      warn "bundler-purifier: no lockfile; using the ordinary, impure environment"
+      command = args.empty? ? [ENV.fetch("SHELL", "bash")] : args
+      exec(*command, chdir: root)
+    end
+    read_lock!
+    FileUtils.mkdir_p(state_dir)
+    command = ["nix", "develop", "--file", File.join(lib_dir, "realize.nix"),
+               "devShell", *realize_args, "--profile", File.join(state_dir, "shell")]
+    command += ["--command", *args] unless args.empty?
+    exec(*command, chdir: root)
   end
 
   # Re-resolves Gemfile.lock with Bundler's own `bundle update`, for every
@@ -597,6 +617,7 @@ module BundlerPurifier
                        bundle update, then lock
       prefetch [ARGS]  realize the locked gems and the dev shell, and
                        install the bundle offline (ARGS go to bundle install)
+      shell [COMMAND...] enter the project environment, or run COMMAND in it
       publish [ARGS]   push the gems that Nix built (ARGS go to gem push)
   USAGE
 
@@ -619,6 +640,7 @@ module BundlerPurifier
     when "lock" then lock(force: argv.delete("--force") ? true : false)
     when "update" then update(argv)
     when "prefetch" then prefetch(argv)
+    when "shell" then shell(argv)
     when "publish" then publish(argv)
     else
       warn USAGE

@@ -16,11 +16,11 @@ echo "== prefetch of app"
 loop=$(cat <<EOF
 set -euo pipefail
 cd "$app"
-nix develop --offline .bundler-purifier/shell --command bundle install
-output=\$(nix develop --offline .bundler-purifier/shell --command bundle exec ruby main.rb)
+"$cli" shell -- bundle install
+output=\$("$cli" shell -- bundle exec ruby main.rb)
 echo "\$output"
 [[ "\$output" == *"app purified"* ]]
-nix develop --offline .bundler-purifier/shell --command bundle exec ruby-lsp --version
+"$cli" shell -- bundle exec ruby-lsp --version
 EOF
 )
 

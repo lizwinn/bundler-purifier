@@ -10,42 +10,33 @@ fetches the downloads. It builds on x86_64-linux and aarch64-linux.
 
 ## Installation
 
-Install the integration into your Nix profile once:
+Optionally install the CLI into your Nix profile:
 
 ```sh
 nix profile install 'github:nix-purifiers/bundler-purifier'
 ```
 
-This installs the purifier CLI. The workflow below prepares the native
-tool's cache, hook or environment; follow that activation step before using
-your usual commands. The ordinary tool itself remains your normal
-installation unless the setup explicitly supplies a toolchain.
-
-`nix shell` makes an integration available temporarily instead of installing
-it. Keep using the activation steps below where a project environment or
-prefetched cache is required.
+The examples below use `nix run` and need no installation.
 
 ## Quickstart
 
-Install Nix, then run the following from your existing project's root.
-The setup prepares the locked dependencies and the integration that
-Bundler's normal commands use:
+Run from the project root:
 
 ```zsh
 nix run github:nix-purifiers/bundler-purifier -- lock
 nix run github:nix-purifiers/bundler-purifier -- prefetch
-nix develop .bundler-purifier/shell
+nix run github:nix-purifiers/bundler-purifier -- shell
 bundle exec rake
 ```
 
-Commit the lockfiles that the lock command writes, including the build
-tool's own lockfile when it has one. Keep using the project's usual build,
-test and editor commands with this setup. Nix provides the locked
-dependencies; the development commands above run outside the Nix sandbox.
-No project Nix files are needed for this workflow.
+The shell definition comes from bundler-purifier and reads the project's
+lockfiles. `.bundler-purifier/` holds caches and GC roots; it does not
+contain generated Nix files. Commit `Gemfile.lock` and
+`bundler-purifier.lock.json`, and ignore `.bundler-purifier/`.
 
-Sandboxed builds of the whole project are an optional
-[next step](#building-the-project-with-nix).
+If you install the CLI, `bundler-purifier shell` is equivalent. Use
+`shell -- <command>` to run one command. Without a purifier lockfile,
+`shell` warns and uses the ordinary environment with impure resolution.
 
 ## Development loop
 
@@ -108,14 +99,17 @@ in another one:
   inputs.bundler-purifier.url = "github:nix-purifiers/bundler-purifier";
   inputs.nixpkgs.follows = "bundler-purifier/nixpkgs";
 
-  outputs = { nixpkgs, bundler-purifier, ... }:
+  outputs =
+    { nixpkgs, bundler-purifier, ... }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
         inherit system;
         overlays = [ bundler-purifier.overlays.default ];
       };
-      project = pkgs.bundler-purifier.buildBundlerProject { src = ./.; };
+      project = pkgs.bundler-purifier.buildBundlerProject {
+        src = ./.;
+      };
     in
     {
       packages.${system} = project.packages;
@@ -193,15 +187,15 @@ For an ad hoc build, the builder can also be evaluated directly from the
 project root. Replace the example package name with one from your project:
 
 ```zsh
-nix build --impure --expr '
-  let
-    purifier = builtins.getFlake "github:nix-purifiers/bundler-purifier";
-    pkgs = import purifier.inputs.nixpkgs {
-      system = builtins.currentSystem;
-      overlays = [ purifier.overlays.default ];
-    };
-  in
-  (pkgs.bundler-purifier.buildBundlerProject { src = ./.; }).packages.app'
+nix build --impure --expr 'let
+  purifier = builtins.getFlake "github:nix-purifiers/bundler-purifier";
+  pkgs = import purifier.inputs.nixpkgs {
+    system = builtins.currentSystem;
+    overlays = [ purifier.overlays.default ];
+  };
+in
+(pkgs.bundler-purifier.buildBundlerProject { src = ./.; })
+.packages.app'
 ```
 
 This uses the purifier's pinned nixpkgs, matching the lock command above.
@@ -215,7 +209,7 @@ purifier from that package set or pass a compatible toolchain to the builder.
 
 ```zsh
 nix run github:nix-purifiers/bundler-purifier -- prefetch
-nix develop .bundler-purifier/shell
+nix run github:nix-purifiers/bundler-purifier -- shell
 ```
 
 `prefetch` realizes everything the lock lists for the current system: the
@@ -239,8 +233,9 @@ end
 ```
 
 Then run `bundler-purifier lock` and `bundler-purifier prefetch`, and start
-the editor from `nix develop .bundler-purifier/shell`, or point its Ruby
-LSP extension at that shell. Ruby LSP uses the project's bundle when the
+the editor with `bundler-purifier shell -- <editor>`, or use
+`nix run github:nix-purifiers/bundler-purifier -- shell -- <editor>`
+without installing the CLI. Ruby LSP uses the project's bundle when the
 Gemfile has it, and needs no download of its own.
 
 ## Troubleshooting
@@ -327,19 +322,18 @@ processing loads libvips through FFI, so the build passes libvips in
 `buildInputs`. From the same directory:
 
 ```zsh
-nix build --impure --expr '
-  let
-    purifier = builtins.getFlake "github:nix-purifiers/bundler-purifier";
-    pkgs = import purifier.inputs.nixpkgs {
-      system = builtins.currentSystem;
-      overlays = [ purifier.overlays.default ];
-    };
-  in
-  (pkgs.bundler-purifier.buildBundlerProject {
-    src = ./.;
-    name = "lobsters";
-    buildInputs = [ pkgs.vips ];
-  }).packages.app'
+nix build --impure --expr 'let
+  purifier = builtins.getFlake "github:nix-purifiers/bundler-purifier";
+  pkgs = import purifier.inputs.nixpkgs {
+    system = builtins.currentSystem;
+    overlays = [ purifier.overlays.default ];
+  };
+in
+(pkgs.bundler-purifier.buildBundlerProject {
+  src = ./.;
+  name = "lobsters";
+  buildInputs = [ pkgs.vips ];
+}).packages.app'
 ```
 
 `result` is Lobsters with its bundle installed. For day-to-day work on
@@ -347,7 +341,7 @@ Lobsters:
 
 ```zsh
 nix run github:nix-purifiers/bundler-purifier -- prefetch
-nix develop .bundler-purifier/shell
+nix run github:nix-purifiers/bundler-purifier -- shell
 cp config/database.yml.sample config/database.yml
 RAILS_ENV=test bundle exec rails db:create db:schema:load
 bundle exec rspec

@@ -42,6 +42,16 @@ class BundlerPurifierTest < Minitest::Test
     File.write(path, content)
   end
 
+  def test_shell_without_a_lock_warns_and_preserves_arguments_and_exit_status
+    out, err, status = Open3.capture3(
+      RbConfig.ruby, File.expand_path(SCRIPT, @previous_dir), "shell", "--",
+      RbConfig.ruby, "-e", 'puts ARGV.fetch(0); exit 37', "literal ; $HOME"
+    )
+    assert_equal "literal ; $HOME\n", out
+    assert_includes err, "no lockfile; using the ordinary, impure environment"
+    assert_equal 37, status.exitstatus
+  end
+
   def test_https_git_url_rewrites_ssh_sources
     assert_equal "https://github.com/o/r.git", BP.https_git_url("git@github.com:o/r.git")
     assert_equal "https://github.com/o/r.git", BP.https_git_url("ssh://git@github.com/o/r.git")
