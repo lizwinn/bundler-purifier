@@ -205,8 +205,9 @@ purifier from that package set or pass a compatible toolchain to the builder.
 ## Working offline
 
 ```zsh
-nix run github:nix-purifiers/bundler-purifier -- prefetch
-nix run github:nix-purifiers/bundler-purifier -- shell
+nix shell 'github:nix-purifiers/bundler-purifier'
+bundler-purifier prefetch
+bundler-purifier shell
 ```
 
 `prefetch` realizes everything the lock lists for the current system: the
@@ -230,9 +231,8 @@ end
 ```
 
 Then run `bundler-purifier lock` and `bundler-purifier prefetch`, and start
-the editor with `bundler-purifier shell -- <editor>`, or use
-`nix run github:nix-purifiers/bundler-purifier -- shell -- <editor>`
-without installing the CLI. Ruby LSP uses the project's bundle when the
+the editor with `bundler-purifier shell -- <editor>` from the
+`nix shell` environment. Ruby LSP uses the project's bundle when the
 Gemfile has it, and needs no download of its own.
 
 ## Troubleshooting
@@ -309,7 +309,8 @@ for sqlite3 in its `.bundle/config`. bundler-purifier takes both as they
 are. In a checkout of Lobsters:
 
 ```zsh
-nix run github:nix-purifiers/bundler-purifier -- lock
+nix shell 'github:nix-purifiers/bundler-purifier'
+bundler-purifier lock
 ```
 
 The lock run builds nixpkgs' Ruby of the version Lobsters asks for.
@@ -337,8 +338,9 @@ in
 Lobsters:
 
 ```zsh
-nix run github:nix-purifiers/bundler-purifier -- prefetch
-nix run github:nix-purifiers/bundler-purifier -- shell
+nix shell 'github:nix-purifiers/bundler-purifier'
+bundler-purifier prefetch
+bundler-purifier shell
 cp config/database.yml.sample config/database.yml
 RAILS_ENV=test bundle exec rails db:create db:schema:load
 bundle exec rspec
