@@ -5,10 +5,6 @@ Nix-resolved dependencies. Use the normal build and test commands in your
 working tree; building the project itself in the Nix sandbox is an
 optional next step.
 
-It follows the [purifier contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
-
-bundler-purifier is part of [nix-purifiers](https://nix-purifiers.github.io)
-and meets its [contract](https://github.com/nix-purifiers/purifier/blob/main/CONTRACT.md).
 The shared [purifier](https://github.com/nix-purifiers/purifier) library
 fetches the downloads. It builds on x86_64-linux and aarch64-linux.
 
