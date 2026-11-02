@@ -8,24 +8,15 @@ optional next step.
 The shared [purifier](https://github.com/nix-purifiers/purifier) library
 fetches the downloads. It builds on x86_64-linux and aarch64-linux.
 
-## Installation
-
-Optionally install the CLI into your Nix profile:
-
-```sh
-nix profile install 'github:nix-purifiers/bundler-purifier'
-```
-
-The examples below use `nix run` and need no installation.
-
 ## Quickstart
 
-Run from the project root:
+From the project root:
 
 ```zsh
-nix run github:nix-purifiers/bundler-purifier -- lock
-nix run github:nix-purifiers/bundler-purifier -- prefetch
-nix run github:nix-purifiers/bundler-purifier -- shell
+nix shell 'github:nix-purifiers/bundler-purifier'
+bundler-purifier lock
+bundler-purifier prefetch
+bundler-purifier shell
 bundle exec rake
 ```
 
@@ -34,9 +25,11 @@ lockfiles. `.bundler-purifier/` holds caches and GC roots; it does not
 contain generated Nix files. Commit `Gemfile.lock` and
 `bundler-purifier.lock.json`, and ignore `.bundler-purifier/`.
 
-If you install the CLI, `bundler-purifier shell` is equivalent. Use
-`shell -- <command>` to run one command. Without a purifier lockfile,
+Use `shell -- <command>` to run one command. Without a purifier lockfile,
 `shell` warns and uses the ordinary environment with impure resolution.
+
+For persistent use, add these packages through your usual Nix configuration.
+
 
 ## Development loop
 
