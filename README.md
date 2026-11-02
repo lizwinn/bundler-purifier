@@ -93,7 +93,8 @@ in another one:
 
 ```nix
 {
-  inputs.bundler-purifier.url = "github:nix-purifiers/bundler-purifier";
+  inputs.bundler-purifier.url =
+    "github:nix-purifiers/bundler-purifier";
   inputs.nixpkgs.follows = "bundler-purifier/nixpkgs";
 
   outputs =
@@ -102,9 +103,12 @@ in another one:
       system = "x86_64-linux";
       pkgs = import nixpkgs {
         inherit system;
-        overlays = [ bundler-purifier.overlays.default ];
+        overlays = [
+          bundler-purifier.overlays.default
+        ];
       };
-      project = pkgs.bundler-purifier.buildBundlerProject {
+      project =
+        pkgs.bundler-purifier.buildBundlerProject {
         src = ./.;
       };
     in
