@@ -564,6 +564,13 @@ module BundlerPurifier
       end
     end
     run!({}, "nix", "develop", shell, "--command", "bundle", "config", "set", "--local", "cache_path", cache, chdir: root)
+    # A fresh project gets its own gems, rather than sharing the Ruby's
+    # system or user gem directory. Explicit Bundler paths (including
+    # path.system) remain the user's choice.
+    settings = Bundler::Settings.new(File.join(root, ".bundle"))
+    unless settings[:path] || settings["path.system"]
+      run!({}, "nix", "develop", shell, "--command", "bundle", "config", "set", "--local", "path", "vendor/bundle", chdir: root)
+    end
     run!({}, "nix", "develop", shell, "--command", "bundle", "install", "--local", *args, chdir: root)
     puts "bundler-purifier: prefetched; enter the environment with `bundler-purifier shell`"
   end

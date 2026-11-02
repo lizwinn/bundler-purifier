@@ -13,6 +13,16 @@ app="$work/fixtures/app"
 echo "== prefetch of app"
 (cd "$app" && "$cli" prefetch)
 
+echo "== project-local gems by default"
+(cd "$app" && "$cli" shell -- bundle exec ruby -rbundler -e \
+  'abort "gems escaped the project" unless Bundler.bundle_path.to_s.start_with?(File.join(Dir.pwd, "vendor/bundle/"))')
+
+echo "== preserve an explicitly configured bundle path"
+(cd "$app" && "$cli" shell -- bundle config set --local path "$work/custom-bundle")
+(cd "$app" && "$cli" prefetch)
+(cd "$app" && "$cli" shell -- bundle exec ruby -rbundler -e \
+  'abort "custom path was replaced" unless Bundler.bundle_path.to_s.start_with?(ARGV.fetch(0) + "/")' "$work/custom-bundle")
+
 loop=$(cat <<EOF
 set -euo pipefail
 cd "$app"

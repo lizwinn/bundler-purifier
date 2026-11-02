@@ -25,6 +25,10 @@ lockfiles. `.bundler-purifier/` holds caches and GC roots; it does not
 contain generated Nix files. Commit `Gemfile.lock` and
 `bundler-purifier.lock.json`, and ignore `.bundler-purifier/`.
 
+`prefetch` installs gems into `vendor/bundle` unless a Bundler path is
+already configured. Add that directory to `.gitignore`. `bundle exec`
+uses this project’s bundle; no RVM gemset is required.
+
 Use `shell -- <command>` to run one command. Without a purifier lockfile,
 `shell` warns and uses the ordinary environment with impure resolution.
 
