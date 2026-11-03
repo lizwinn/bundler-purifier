@@ -53,6 +53,7 @@
   # The trees of the path sources outside the project, by the path
   # Gemfile.lock gives them.
   externalPaths ? { },
+  providedGems ? [ ],
 }:
 let
   lockName = baseNameOf (toString lockFile);
@@ -71,7 +72,8 @@ let
   whole =
     builtins.match "[[:space:]]*\\{.*" (builtins.substring 0 64 text) != null
     && builtins.match ".*}[[:space:]]*" (builtins.substring (length - 64) 64 text) != null;
-  parsed = if lockExists && whole then builtins.fromJSON text else null;
+  parsed =
+    if lockExists && whole then builtins.fromJSON (builtins.unsafeDiscardStringContext text) else null;
 
   supportedVersion = import ./lock-version.nix;
   # The hash `bundler-purifier lock` writes as contentHash: SHA-256 of the
@@ -256,7 +258,12 @@ let
   bundlerFile = "bundler-${bundler}.gem";
 
   rawFiles =
-    lib.concatMap (source: map (gemFile source.remotes) source.specs) gemfileLockData.gemSources
+    lib.concatMap (
+      source:
+      map (gemFile source.remotes) (
+        builtins.filter (spec: !(lib.elem spec.name providedGems)) source.specs
+      )
+    ) gemfileLockData.gemSources
     ++ lib.optional (bundler != null) {
       path = bundlerFile;
       url = "https://rubygems.org/gems/${bundlerFile}";
@@ -283,25 +290,31 @@ let
   # The directory Bundler caches a git source in: the last component of its
   # URL without .git, and the first twelve characters of the revision.
   rawGitCheckouts = lib.unique (
-    map (
-      source:
-      let
-        remote = lib.head source.remotes;
-        rev = source.fields.revision;
-      in
-      {
-        path = "${lib.removeSuffix ".git" (baseNameOf (lib.removeSuffix "/" remote))}-${builtins.substring 0 12 rev}";
-        git = {
-          url = httpsGitUrl remote;
-          inherit rev;
-          submodules = (source.fields.submodules or "false") == "true";
-          leaveDotGit = false;
-          commitObject = null;
-        };
-        hash = purifierLock.gitHashes.${rev} or null;
-        missing = "a hash for the git checkout ${remote} at ${rev}";
-      }
-    ) gemfileLockData.gitSources
+    map
+      (
+        source:
+        let
+          remote = lib.head source.remotes;
+          rev = source.fields.revision;
+        in
+        {
+          path = "${lib.removeSuffix ".git" (baseNameOf (lib.removeSuffix "/" remote))}-${builtins.substring 0 12 rev}";
+          git = {
+            url = httpsGitUrl remote;
+            inherit rev;
+            submodules = (source.fields.submodules or "false") == "true";
+            leaveDotGit = false;
+            commitObject = null;
+          };
+          hash = purifierLock.gitHashes.${rev} or null;
+          missing = "a hash for the git checkout ${remote} at ${rev}";
+        }
+      )
+      (
+        builtins.filter (
+          source: lib.any (spec: !(lib.elem spec.name providedGems)) source.specs
+        ) gemfileLockData.gitSources
+      )
   );
 
   raw = rawFiles ++ rawGitCheckouts;

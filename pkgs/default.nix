@@ -21,5 +21,6 @@ in
   cli = callPackage ./cli {
     version = builtins.replaceStrings [ "\n" ] [ "" ] (builtins.readFile ../version.txt);
     inherit purifierRef;
+    inherit (lib) purifier;
   };
 }

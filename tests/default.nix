@@ -13,6 +13,8 @@
   # bundler-purifier with buildBundlerProject.
   overlay,
   cli,
+  sharedTools,
+  purifier,
   # The source of Lobsters at its pinned commit (tests/dependencies).
   lobsters,
 }:
@@ -179,6 +181,28 @@ let
       '';
 in
 {
+  composition-default-json =
+    pkgs.runCommand "bundler-default-json-composition"
+      {
+        nativeBuildInputs = [ pkgs.ruby ];
+        BUNDLER_PURIFIER_RUBYGEMS_TOOL = "${sharedTools}/rubygems_repository.rb";
+      }
+      ''
+            mkdir -p tools tests
+            cp -r ${../tools}/. tools/
+            cp ${./native-json.rb} tests/native-json.rb
+            export HOME="$TMPDIR"
+            for library in json psych pathname stringio; do
+          ruby tests/native-json.rb "$library"
+        done
+            touch "$out"
+      '';
+
+  composition-native = import ./composition.nix {
+    inherit pkgs build;
+    producer = app;
+    inherit purifier;
+  };
   inherit cli;
 
   conformance-stale = failsWith "stale" "run bundler-purifier lock";

@@ -57,6 +57,8 @@
           {
             checks = import ../../../tests {
               inherit pkgs;
+              sharedTools = closure-lib.purifier.projectInputsTool;
+              purifier = closure-lib.purifier;
               overlay = self.overlays.default;
               inherit (self.packages.${system}) cli;
               inherit (inputs) lobsters;

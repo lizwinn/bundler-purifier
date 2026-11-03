@@ -10,6 +10,8 @@
   stdenvNoCC,
   makeWrapper,
   ruby,
+  python3,
+  purifier,
   gitMinimal,
   nix-prefetch-git,
   path,
@@ -18,6 +20,12 @@
   # pkgs/default.nix reads from flake.lock.
   purifierRef ? null,
 }:
+let
+  nixpkgsSource = builtins.path {
+    inherit path;
+    name = "source";
+  };
+in
 assert
   purifierRef != null
   || throw "bundler-purifier: the CLI needs the shared nix-purifiers library; pass purifierRef, as pkgs/default.nix does.";
@@ -31,21 +39,42 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
     install -Dm644 bundler-purifier "$out/libexec/bundler-purifier.rb"
+    install -Dm644 bundle "$out/libexec/bundle-wrapper.rb"
     # The user's PATH comes first, for the user's nix. git serves Bundler's
     # git sources, and nix-prefetch-git hashes them for the lock.
     makeWrapper ${ruby}/bin/ruby "$out/bin/bundler-purifier" \
       --add-flags "$out/libexec/bundler-purifier.rb" \
+      --set BUNDLER_PURIFIER_TOOLS ${../../tools} \
+      --prefix PYTHONPATH : ${purifier.projectInputsTool} \
       --set BUNDLER_PURIFIER_LIB ${../../nix/lib} \
       --set BUNDLER_PURIFIER_SHARED_FLAKE ${lib.escapeShellArg purifierRef} \
-      --set BUNDLER_PURIFIER_NIXPKGS ${path} \
+      --set BUNDLER_PURIFIER_NIXPKGS ${nixpkgsSource} \
       --suffix PATH : ${
         lib.makeBinPath [
           gitMinimal
+          python3
+          nix-prefetch-git
+        ]
+      }
+    makeWrapper ${ruby}/bin/ruby "$out/bin/bundle" \
+      --add-flags "$out/libexec/bundle-wrapper.rb" \
+      --set BUNDLER_PURIFIER_COMMAND "$out/libexec/bundler-purifier.rb" \
+      --set BUNDLER_PURIFIER_BUNDLE "$out/bin/bundle" \
+      --set BUNDLER_PURIFIER_TOOLS ${../../tools} \
+      --prefix PYTHONPATH : ${purifier.projectInputsTool} \
+      --set BUNDLER_PURIFIER_LIB ${../../nix/lib} \
+      --set BUNDLER_PURIFIER_SHARED_FLAKE ${lib.escapeShellArg purifierRef} \
+      --set BUNDLER_PURIFIER_NIXPKGS ${nixpkgsSource} \
+      --suffix PATH : ${
+        lib.makeBinPath [
+          gitMinimal
+          python3
           nix-prefetch-git
         ]
       }
     runHook postInstall
   '';
+  passthru = { inherit ruby; };
   meta = {
     description = "Locks the gems a Bundler project downloads, so that Nix can build it offline";
     license = lib.licenses.mit;

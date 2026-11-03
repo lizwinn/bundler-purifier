@@ -1,9 +1,7 @@
 # bundler-purifier
 
 bundler-purifier keeps Bundler's development workflow on locked,
-Nix-resolved dependencies. Use the normal build and test commands in your
-working tree; building the project itself in the Nix sandbox is an
-optional next step.
+Nix-resolved dependencies.
 
 The shared [purifier](https://github.com/nix-purifiers/purifier) library
 fetches the downloads. It builds on x86_64-linux and aarch64-linux.
@@ -16,21 +14,17 @@ From the project root:
 nix shell 'github:nix-purifiers/bundler-purifier'
 bundler-purifier lock
 bundler-purifier prefetch
-bundler-purifier shell
 bundle exec rake
 ```
 
-The shell definition comes from bundler-purifier and reads the project's
-lockfiles. `.bundler-purifier/` holds caches and GC roots; it does not
-contain generated Nix files. Commit `Gemfile.lock` and
+The package supplies a `bundle` wrapper for locked resolution. Without a
+purifier lockfile it warns and runs ordinary, impure Bundler.
+`.bundler-purifier/` holds caches and GC roots. Commit `Gemfile.lock` and
 `bundler-purifier.lock.json`, and ignore `.bundler-purifier/`.
 
 `prefetch` installs gems into `vendor/bundle` unless a Bundler path is
 already configured. Add that directory to `.gitignore`. `bundle exec`
 uses this project’s bundle; no RVM gemset is required.
-
-Use `shell -- <command>` to run one command. Without a purifier lockfile,
-`shell` warns and uses the ordinary environment with impure resolution.
 
 For persistent use, add these packages through your usual Nix configuration.
 
@@ -39,9 +33,8 @@ For persistent use, add these packages through your usual Nix configuration.
 
 Day-to-day work goes through Bundler's own commands: `bundle exec`,
 `bundle exec rake`, `bundle exec rails server`. After changing the
-Gemfile, or after `bundle add` or `bundle update`, run
-`bundler-purifier lock`, which keeps Bundler's resolution and records
-what the new gems need. `bundler-purifier update [<gem>...]` re-resolves
+Gemfile, run `bundler-purifier lock`. The wrapper captures native
+`bundle add`, `remove`, `update` and `lock` changes automatically. `bundler-purifier update [<gem>...]` re-resolves
 every gem, or the named ones, with `bundle update`, and then locks.
 
 `lock` relocks only when the Gemfile, `Gemfile.lock` or a gemspec changed,
@@ -59,20 +52,28 @@ native extension (`BUNDLE_BUILD__<gem>`) apply in the sandbox.
 gem file with `gem push`. Options after `publish` go to `gem push`, and
 credentials work as they do for `gem push`.
 
-A gem added to the Gemfile while offline stops in Bundler's own
-resolution, with Bundler's message rather than one naming
-`bundler-purifier lock`. Bundler resolves before any hook it offers runs,
-so bundler-purifier has no point at which to add its message. Run
-`bundler-purifier lock` while online after adding a gem.
+## Dependencies from Nix projects
 
-bundler-purifier is a standalone command, not a Bundler plugin. A Bundler
-plugin is declared in the Gemfile, which adds it to the gems the project
-locks, or installed per user from a gem server. bundler-purifier runs from
-its flake instead, and each of its commands wraps Bundler's own commands.
-`lock` runs `bundle cache --all-platforms --no-install` with empty caches
-to download every locked gem, and runs `bundle lock` first when there is
-no `Gemfile.lock`. `update` runs `bundle update`, and `prefetch` runs
-`bundle install --local`.
+Export a producer's `projections.rubygems`, then declare it while locking:
+
+```zsh
+bundler-purifier lock \
+  --input 'github:your-org/your-library#default'
+bundle exec rake
+```
+
+Keep the Gemfile's ordinary dependency requirements. The integration binds
+supplied gems to their Nix identities; only the producer's Nix source pin
+enters the purifier lock. In a Nix build, `dependencies = [ library ];`
+declares the same input directly. Packages and releases expose the prepared
+runtime graph through `projections.rubygems`, including compiled extensions.
+Libraries delivered by Ruby stay with their producing SDK; the integration
+selects that SDK automatically. SDK requirements must agree across inputs.
+
+For composed projects, `publish` uploads those namespaced gem archives with
+exact dependency versions. Matching published archives are reused; different
+bytes at an existing version stop publication. Ordinary Bundler consumers
+need no purifier code to use the resulting repository.
 
 ## Building the project with Nix
 
@@ -211,7 +212,6 @@ purifier from that package set or pass a compatible toolchain to the builder.
 ```zsh
 nix shell 'github:nix-purifiers/bundler-purifier'
 bundler-purifier prefetch
-bundler-purifier shell
 ```
 
 `prefetch` realizes everything the lock lists for the current system: the
@@ -235,8 +235,8 @@ end
 ```
 
 Then run `bundler-purifier lock` and `bundler-purifier prefetch`, and start
-the editor with `bundler-purifier shell -- <editor>` from the
-`nix shell` environment. Ruby LSP uses the project's bundle when the
+the editor from the `nix shell` environment. Run the language server
+through `bundle exec ruby-lsp`. Ruby LSP uses the project's bundle when the
 Gemfile has it, and needs no download of its own.
 
 ## Troubleshooting
@@ -344,7 +344,6 @@ Lobsters:
 ```zsh
 nix shell 'github:nix-purifiers/bundler-purifier'
 bundler-purifier prefetch
-bundler-purifier shell
 cp config/database.yml.sample config/database.yml
 RAILS_ENV=test bundle exec rails db:create db:schema:load
 bundle exec rspec

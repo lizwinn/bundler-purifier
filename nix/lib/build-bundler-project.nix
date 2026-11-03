@@ -69,6 +69,7 @@
   # The `purifier` namespace of the shared nix-purifiers library, which the
   # bundler-purifier overlay passes.
   purifier,
+  integrationTools ? ../../tools,
   # lib.bundler-purifier.readLock (read-lock.nix), which the overlay passes.
   readLock,
 }:
@@ -114,8 +115,38 @@
   # Gemfile.lock gives them (relative to the project root), such as
   # { "../shared" = inputs.shared; }. The lock lists them as externalPaths.
   externalPaths ? { },
+  dependencies ? purifier.lockedProjectInputs {
+    inputs =
+      (builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.readFile lockFile))).projectInputs
+        or [ ];
+    system = stdenv.hostPlatform.system;
+  },
 }:
 let
+  readJson = file: builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.readFile file));
+  selectedInputs = purifier.projectInputs {
+    inherit dependencies;
+    formats = [ "rubygems" ];
+  };
+  inputViews = map (input: {
+    repository = toString input.repository;
+    catalog = input.repository.catalog;
+  }) selectedInputs;
+  providedGems = lib.unique (
+    lib.concatMap (
+      view:
+      let
+        catalog = readJson view.catalog;
+      in
+      map (entry: entry.name) (catalog.packages ++ (catalog.intrinsics or [ ]))
+    ) inputViews
+  );
+  sdkRequirements = lib.concatMap (view: (readJson view.catalog).intrinsics or [ ]) inputViews;
+  sdkOrigins = lib.unique (map (entry: entry.sdk) sdkRequirements);
+  sdkContext = builtins.getContext (
+    lib.concatMapStrings (input: toString input.repository) selectedInputs
+  );
+  inputEnvironment = lib.escapeShellArg (builtins.toJSON inputViews);
 
   # A file of the project, read without copying the whole project into the
   # store first.
@@ -129,6 +160,7 @@ let
       lockFile
       gemfileLock
       externalPaths
+      providedGems
       ;
   };
   checkedLock = purifier.checkLock readResult;
@@ -212,6 +244,9 @@ let
     in
     !(
       base == ".git"
+      || base == ".bundler-purifier"
+      || lib.hasPrefix ".bundler-purifier-" base
+      || lib.hasPrefix ".bundler-purifier.Gemfile" base
       || (lib.hasPrefix ".bundle/" rel && rel != ".bundle/config")
       || rel == "vendor/bundle"
       || rel == "vendor/cache"
@@ -231,6 +266,13 @@ let
   ruby' =
     if ruby != null then
       ruby
+    else if sdkOrigins != [ ] then
+      assert
+        lib.length sdkOrigins == 1 || throw "bundler-purifier: Nix inputs require different Ruby SDKs";
+      assert
+        lib.all (entry: lib.hasPrefix stdenv.hostPlatform.system entry.system) sdkRequirements
+        || throw "bundler-purifier: Nix input Ruby SDK is for a different platform";
+      builtins.appendContext (lib.head sdkOrigins) sdkContext
     else
       rubies.${rubyAttr}
         or (throw "bundler-purifier: the builder has no ${rubyAttr} for the Ruby ${lock.ruby} the lock was made with; pass `ruby`.");
@@ -241,7 +283,7 @@ let
     cp --no-preserve=mode ${gemfileLock} Gemfile.lock
   '';
 
-  gemCache = import ./gem-cache.nix {
+  downloadedGemCache = import ./gem-cache.nix {
     inherit
       lib
       purifier
@@ -262,18 +304,43 @@ let
     // fetchers;
   };
 
+  gemCache =
+    if selectedInputs == [ ] then
+      downloadedGemCache
+    else
+      runCommand "bundler-composed-gem-cache" { } ''
+        mkdir -p "$out"
+        cp -rs ${downloadedGemCache}/. "$out/"
+        ${lib.concatMapStrings (view: ''
+          for archive in ${view.repository}/gems/*.gem; do
+            ln -s "$archive" "$out/$(basename "$archive")"
+          done
+        '') inputViews}
+      '';
+
   # The environment shared by every build. Bundler's own configuration
   # goes to .bundle/config in the build directory, which `app` keeps.
   setupBundler = ''
     export HOME="$TMPDIR/home"
     export GEM_HOME="$TMPDIR/gems"
+    export BUNDLER_PURIFIER_BUNDLER_VERSION=${lib.escapeShellArg lock.bundler}
     # The sandbox sets no locale, and Ruby would read gemspecs and file
     # lists as US-ASCII.
     export LC_ALL=C.UTF-8
     # The binstub that gem install writes starts with `#!ruby`, which the
     # sandbox cannot resolve, so `bundle` runs it through Ruby. The later
     # phases run in the same shell and keep the function.
-    bundle() { ruby "$GEM_HOME/bin/bundle" "$@"; }
+    ${
+      if selectedInputs == [ ] then
+        ''
+          bundle() { ruby "$GEM_HOME/bin/bundle" "$@"; }
+        ''
+      else
+        ''
+          export BUNDLER_PURIFIER_INPUT_VIEWS=${inputEnvironment}
+          bundle() { ruby ${integrationTools}/native_bundle_command.rb "$@"; }
+        ''
+    }
     mkdir -p "$HOME" "$GEM_HOME" vendor
     rm -rf vendor/cache
     # Bundler copies what it installs from the cache and leaves marker
@@ -291,6 +358,11 @@ let
     # Bundler version of BUNDLED WITH and Bundler has nothing to fetch.
     gem install --local --no-document --install-dir "$GEM_HOME" --bindir "$GEM_HOME/bin" \
       vendor/cache/bundler-${lock.bundler}.gem
+    bundle config set --local cache_path vendor/cache
+    ${lib.optionalString (selectedInputs != [ ]) ''
+      BUNDLER_PURIFIER_PERSIST_LOCK=1 BUNDLE_FROZEN=false BUNDLE_DEPLOYMENT=false \
+        bundle lock --local >&2
+    ''}
     bundle config set --local deployment true
     bundle config set --local frozen true
     bundle config set --local path vendor/bundle
@@ -393,6 +465,13 @@ let
         # The gem cache served the install; the output keeps the installed
         # bundle under vendor/bundle. The repository for the gemspecs goes.
         rm -rf vendor/cache
+        ${lib.optionalString (selectedInputs != [ ]) ''
+          cat > .bundler-purifier.Gemfile <<'RUBY'
+          require "${integrationTools}/rubygems_inputs.rb"
+          eval_gemfile "Gemfile"
+          RUBY
+          cp Gemfile.lock .bundler-purifier.Gemfile.lock
+        ''}
         mkdir -p "$out"
         ${
           if hasExternal then
@@ -420,7 +499,10 @@ let
   bundle = writeShellScriptBin "bundle" ''
     export GEM_HOME=${app}/${projectDir}/.bundle/purifier/bundler
     export GEM_PATH="$GEM_HOME"
-    export BUNDLE_GEMFILE=${app}/${projectDir}/Gemfile
+    export BUNDLER_PURIFIER_BUNDLER_VERSION=${lib.escapeShellArg lock.bundler}
+    export BUNDLE_GEMFILE=${app}/${projectDir}/${
+      if selectedInputs == [ ] then "Gemfile" else ".bundler-purifier.Gemfile"
+    }
     if [ -z "''${LC_ALL:-}''${LANG:-}" ]; then
       export LANG=C.UTF-8
     fi
@@ -428,7 +510,17 @@ let
     # of them call `git ls-files`.
     export PATH=${ruby'}/bin:"$PATH":${gitMinimal}/bin
     export LD_LIBRARY_PATH=${runtimeLibraryPath}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
-    exec ruby "$GEM_HOME/bin/bundle" "$@"
+    ${
+      if selectedInputs == [ ] then
+        ''
+          exec ruby "$GEM_HOME/bin/bundle" "$@"
+        ''
+      else
+        ''
+          export BUNDLER_PURIFIER_INPUT_VIEWS=${inputEnvironment}
+          exec ruby "$GEM_HOME/bin/bundle" "$@"
+        ''
+    }
   '';
 
   mkGem =
@@ -469,6 +561,53 @@ let
     package;
 
   gems = lib.mapAttrs (_: mkGem) lock.gemsByName;
+  capturedGems =
+    runCommand "${name}-runtime-gems"
+      {
+        nativeBuildInputs = [
+          ruby'
+          gitMinimal
+        ];
+        ownArchives = builtins.toJSON (map (gem: gem.gemFile) (lib.attrValues gems));
+        projectRoots = builtins.toJSON (map (gem: gem.name) (lib.filter (gem: gem.dir == ".") lock.gems));
+      }
+      ''
+            export HOME="$TMPDIR/home"
+            mkdir -p "$HOME" project
+            cp -r --no-preserve=mode ${app}/. project/
+            cd project/${projectDir}
+            export GEM_HOME=${app}/${projectDir}/.bundle/purifier/bundler
+            export GEM_PATH="$GEM_HOME"
+            export BUNDLE_GEMFILE="$PWD/${
+              if selectedInputs == [ ] then "Gemfile" else ".bundler-purifier.Gemfile"
+            }"
+            export BUNDLER_PURIFIER_INPUT_VIEWS=${inputEnvironment}
+            export BUNDLER_PURIFIER_OWN_ARCHIVES="$ownArchives"
+        export BUNDLER_PURIFIER_PROJECT_ROOTS="$projectRoots"
+            ${
+              if selectedInputs == [ ] then
+                ''
+                  ruby "$GEM_HOME/bin/bundle" exec ruby ${integrationTools}/capture_gems.rb "$out"
+                ''
+              else
+                ''
+                  export BUNDLER_PURIFIER_PERSISTENT_GEMFILE="$BUNDLE_GEMFILE"
+                  ruby ${integrationTools}/native_bundle_command.rb exec ruby ${integrationTools}/capture_gems.rb "$out"
+                ''
+            }
+      '';
+  projectionFor =
+    roots:
+    purifier.rubygemsProjections {
+      archives = map (archive: "${capturedGems}/${archive}") (readJson "${capturedGems}/archives.json");
+      producer = app;
+      inherit dependencies runCommand roots;
+      intrinsics = readJson "${capturedGems}/intrinsics.json";
+      ruby = ruby';
+      name = "${name}-rubygems-repository";
+    };
+  projections = projectionFor (readJson "${capturedGems}/roots.json");
+  releaseProjections = projectionFor (map (gem: gem.name) lock.gems);
   clashes = lib.filter (n: gems ? ${n}) [
     "app"
     "bundle"
@@ -478,8 +617,14 @@ assert
   clashes == [ ]
   || throw "bundler-purifier: a gemspec of the project builds a gem named ${lib.head clashes}, which clashes with packages.${lib.head clashes}.";
 {
-  packages = gems // {
-    inherit app bundle;
+  inherit projections;
+  packages = lib.mapAttrs (name: gem: gem // { projections = projectionFor [ name ]; }) gems // {
+    app = app // {
+      inherit projections;
+    };
+    bundle = bundle // {
+      inherit projections;
+    };
   };
 
   tests = app.overrideAttrs (_: {
@@ -489,11 +634,14 @@ assert
 
   release =
     if lib.length (lib.attrNames gems) == 1 then
-      lib.head (lib.attrValues gems)
+      (lib.head (lib.attrValues gems)) // { projections = releaseProjections; }
     else if gems != { } then
       symlinkJoin {
         name = "${name}-release";
         paths = lib.attrValues gems;
+        passthru = {
+          projections = releaseProjections;
+        };
       }
     else
       throw "bundler-purifier: the project has no gemspec, so it has no release for `bundler-purifier publish` to push.";
@@ -525,6 +673,18 @@ assert
     ]
     ++ nativeBuildInputs
     ++ runtimeInputs;
+    LD_LIBRARY_PATH = runtimeLibraryPath;
+  };
+
+  environment = {
+    PATH = lib.makeBinPath (
+      [
+        ruby'
+        gitMinimal
+      ]
+      ++ nativeBuildInputs
+      ++ runtimeInputs
+    );
     LD_LIBRARY_PATH = runtimeLibraryPath;
   };
 

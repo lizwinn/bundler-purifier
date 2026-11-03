@@ -15,12 +15,14 @@
   nixpkgs,
   # The shared nix-purifiers library as a locked flake reference.
   purifierFlake,
+  integrationTools ? ../../tools,
 }:
 let
   pkgs = import nixpkgs { };
   readLock = import ./read-lock.nix { inherit (pkgs) lib; };
   buildBundlerProject = pkgs.callPackage ./build-bundler-project.nix {
     inherit readLock;
+    integrationTools = /. + (toString integrationTools);
     inherit ((builtins.getFlake purifierFlake).lib) purifier;
   };
   src = /. + root;
